@@ -33,13 +33,7 @@ When you run `skm my-bundle`, it copies the bundle's files to the appropriate lo
 cargo install skill-manager
 ```
 
-Or build from source:
-
-```bash
-git clone https://github.com/reuben/skill-manager
-cd skill-manager
-cargo install --path .
-```
+This installs the `skm` binary. Requires [Rust](https://rustup.rs/) to be installed.
 
 ## Quick Start
 

@@ -1,0 +1,924 @@
+mod bundle;
+mod config;
+mod discover;
+mod install;
+mod setup;
+mod source;
+mod target;
+
+use anyhow::Result;
+use clap::{CommandFactory, Parser, Subcommand};
+use clap_complete::{generate, Shell};
+use colored::Colorize;
+use std::io;
+use std::path::PathBuf;
+
+use crate::bundle::SkillType;
+use crate::config::{Config, SourceConfig};
+use crate::install::install_bundle;
+use crate::setup::run_setup_wizard;
+use crate::target::Tool;
+
+#[derive(Parser)]
+#[command(name = "skm")]
+#[command(about = "Manage AI coding tool skills for Claude, OpenCode, and Cursor")]
+#[command(version)]
+#[command(args_conflicts_with_subcommands = true)]
+struct Cli {
+    #[command(subcommand)]
+    command: Option<Commands>,
+
+    /// Bundle name to install (when no subcommand given)
+    #[arg(value_name = "BUNDLE")]
+    bundle: Option<String>,
+
+    /// Install to OpenCode instead of Claude
+    #[arg(short = 'o', long = "opencode", global = true)]
+    opencode: bool,
+
+    /// Install to Cursor instead of Claude
+    #[arg(short = 'c', long = "cursor", global = true)]
+    cursor: bool,
+
+    /// Install globally (tool-specific location)
+    #[arg(short = 'g', long = "global", global = true)]
+    global: bool,
+
+    /// Target directory (default: current directory)
+    #[arg(short = 't', long = "to", global = true)]
+    target: Option<PathBuf>,
+
+    /// Filter: only install skills
+    #[arg(long = "skills")]
+    skills_only: bool,
+
+    /// Filter: only install agents
+    #[arg(long = "agents")]
+    agents_only: bool,
+
+    /// Filter: only install commands
+    #[arg(long = "commands")]
+    commands_only: bool,
+}
+
+#[derive(Subcommand)]
+enum Commands {
+    /// Install a bundle (alias for `skm <bundle>`)
+    Add {
+        /// Bundle name to install
+        bundle: String,
+    },
+    /// Browse available bundles interactively
+    List,
+    /// Manage skill sources (interactive if no subcommand)
+    Sources {
+        #[command(subcommand)]
+        action: Option<SourcesAction>,
+    },
+    /// Show installed skills in current directory
+    Here {
+        /// Filter by tool (claude, opencode, cursor)
+        #[arg(long)]
+        tool: Option<String>,
+
+        /// Interactively remove skills
+        #[arg(long)]
+        remove: bool,
+
+        /// Remove all installed skills
+        #[arg(long)]
+        clean: bool,
+
+        /// Skip confirmation prompts
+        #[arg(short = 'y', long)]
+        yes: bool,
+    },
+    /// Update git sources to latest
+    Update,
+    /// Generate shell completions
+    Completions {
+        /// Shell to generate completions for
+        #[arg(value_enum)]
+        shell: Shell,
+    },
+}
+
+#[derive(Subcommand)]
+enum SourcesAction {
+    /// List configured sources
+    List,
+    /// Add a source (local path or git URL)
+    Add {
+        /// Path or URL to add
+        path: String,
+    },
+    /// Remove a source
+    Remove {
+        /// Path or URL to remove
+        path: String,
+    },
+}
+
+fn main() -> Result<()> {
+    let cli = Cli::parse();
+
+    // Check if this is first run (no config file) and we're not doing a specific subcommand
+    let config = if !Config::exists()? && cli.command.is_none() && cli.bundle.is_none() {
+        // First run - show setup wizard
+        run_setup_wizard()?
+    } else {
+        // Load existing config or use defaults
+        Config::load_or_default()?
+    };
+
+    // Determine target tool
+    let tool = if cli.cursor {
+        Tool::Cursor
+    } else if cli.opencode {
+        Tool::OpenCode
+    } else {
+        Tool::Claude
+    };
+
+    // Determine target directory
+    let target_dir = if cli.global {
+        tool.global_target()
+    } else if let Some(t) = cli.target {
+        t
+    } else {
+        std::env::current_dir()?
+    };
+
+    // Determine which types to install
+    let types = if cli.skills_only || cli.agents_only || cli.commands_only {
+        let mut t = vec![];
+        if cli.skills_only {
+            t.push(SkillType::Skill);
+        }
+        if cli.agents_only {
+            t.push(SkillType::Agent);
+        }
+        if cli.commands_only {
+            t.push(SkillType::Command);
+        }
+        t
+    } else {
+        vec![SkillType::Skill, SkillType::Agent, SkillType::Command]
+    };
+
+    match cli.command {
+        Some(Commands::Add { bundle: bundle_name }) => {
+            // `skm add <bundle>` is an alias for `skm <bundle>`
+            install_bundle(&config, &bundle_name, &tool, &target_dir, &types)?;
+        }
+        Some(Commands::List) => {
+            browse_bundles(&config)?;
+        }
+        Some(Commands::Sources { action }) => match action {
+            Some(SourcesAction::List) => {
+                sources_list(&config)?;
+            }
+            Some(SourcesAction::Add { path }) => {
+                sources_add(path)?;
+            }
+            Some(SourcesAction::Remove { path }) => {
+                sources_remove(path)?;
+            }
+            None => {
+                // Interactive sources management
+                sources_interactive()?;
+            }
+        },
+        Some(Commands::Here { tool: filter_tool, remove, clean, yes }) => {
+            if remove {
+                interactive_remove(&target_dir, filter_tool.as_deref())?;
+            } else if clean {
+                clean_all_skills(&target_dir, filter_tool.as_deref(), yes)?;
+            } else {
+                show_installed_skills(&target_dir, filter_tool.as_deref())?;
+            }
+        }
+        Some(Commands::Update) => {
+            update_sources(&config)?;
+        }
+        Some(Commands::Completions { shell }) => {
+            generate_completions(shell);
+        }
+        None => {
+            // No subcommand - either list bundles or install a bundle
+            if let Some(bundle_name) = cli.bundle {
+                // Install the specified bundle
+                install_bundle(&config, &bundle_name, &tool, &target_dir, &types)?;
+            } else {
+                // List available bundles
+                list_bundles(&config)?;
+            }
+        }
+    }
+
+    Ok(())
+}
+
+fn browse_bundles(config: &Config) -> Result<()> {
+    use dialoguer::{theme::ColorfulTheme, Select};
+    use crate::bundle::Bundle;
+
+    let sources = config.sources();
+
+    if sources.is_empty() {
+        println!("{}", "No sources configured.".yellow());
+        println!("Add a source with: skm sources add <path>");
+        return Ok(());
+    }
+
+    // Collect all bundles with their source info
+    let mut all_bundles: Vec<(String, Bundle)> = Vec::new();
+
+    for source in &sources {
+        match source.list_bundles() {
+            Ok(bundles) => {
+                for bundle in bundles {
+                    all_bundles.push((source.display_path(), bundle));
+                }
+            }
+            Err(e) => {
+                eprintln!("  {} {} - {}", "Warning:".yellow(), source.display_path(), e);
+            }
+        }
+    }
+
+    if all_bundles.is_empty() {
+        println!("{}", "No bundles found in configured sources.".yellow());
+        return Ok(());
+    }
+
+    loop {
+        println!();
+        println!("{}", "Available Bundles".bold());
+        println!();
+
+        let items: Vec<String> = all_bundles
+            .iter()
+            .map(|(source, bundle)| {
+                let counts = format!(
+                    "{}s {}a {}c",
+                    bundle.skills.len(),
+                    bundle.agents.len(),
+                    bundle.commands.len()
+                );
+                format!("{:<20} {} {}", bundle.name, counts.dimmed(), format!("({})", source).dimmed())
+            })
+            .collect();
+
+        let mut options = items.clone();
+        options.push("← Back".to_string());
+
+        let sel = Select::with_theme(&ColorfulTheme::default())
+            .with_prompt("Select a bundle to explore")
+            .items(&options)
+            .default(0)
+            .interact()?;
+
+        if sel >= all_bundles.len() {
+            break;
+        }
+
+        let (_, bundle) = &all_bundles[sel];
+        show_bundle_details(bundle)?;
+    }
+
+    Ok(())
+}
+
+fn show_bundle_details(bundle: &crate::bundle::Bundle) -> Result<()> {
+    use dialoguer::{theme::ColorfulTheme, Select};
+
+    loop {
+        println!();
+        println!("{} {}", "Bundle:".bold(), bundle.name.cyan());
+        println!();
+
+        let mut items: Vec<String> = Vec::new();
+        let mut file_paths: Vec<Option<std::path::PathBuf>> = Vec::new();
+
+        for (section, files) in [("skills", &bundle.skills), ("agents", &bundle.agents), ("commands", &bundle.commands)] {
+            if !files.is_empty() {
+                items.push(format!("── {}/{} ──", section, format!(" ({} files)", files.len()).dimmed()));
+                file_paths.push(None); // section header
+
+                for file in files {
+                    let preview = get_file_preview(&file.path);
+                    items.push(format!("  {} {}", file.name, preview.dimmed()));
+                    file_paths.push(Some(file.path.clone()));
+                }
+            }
+        }
+
+        items.push("← Back".to_string());
+        file_paths.push(None);
+
+        let sel = Select::with_theme(&ColorfulTheme::default())
+            .with_prompt("Select to view contents")
+            .items(&items)
+            .default(0)
+            .interact()?;
+
+        if sel >= items.len() - 1 {
+            break;
+        }
+
+        let path = match &file_paths[sel] {
+            Some(p) => p,
+            None => continue, // section header
+        };
+
+        // Show file contents
+        println!();
+        println!("{}", "─".repeat(60).dimmed());
+        if let Ok(content) = std::fs::read_to_string(path) {
+            for line in content.lines().take(40) {
+                println!("{}", line);
+            }
+            let line_count = content.lines().count();
+            if line_count > 40 {
+                println!("{}", format!("... ({} more lines)", line_count - 40).dimmed());
+            }
+        }
+        println!("{}", "─".repeat(60).dimmed());
+        println!();
+    }
+
+    Ok(())
+}
+
+fn get_file_preview(path: &std::path::PathBuf) -> String {
+    if let Ok(content) = std::fs::read_to_string(path) {
+        content
+            .lines()
+            .filter(|line| !line.trim().is_empty())
+            .filter(|line| !line.starts_with("---"))
+            .filter(|line| !line.contains(':') || line.starts_with('#'))
+            .take(1)
+            .map(|line| {
+                let trimmed = line.trim_start_matches('#').trim();
+                if trimmed.len() > 50 {
+                    format!("- {}...", &trimmed[..47])
+                } else {
+                    format!("- {}", trimmed)
+                }
+            })
+            .next()
+            .unwrap_or_default()
+    } else {
+        String::new()
+    }
+}
+
+fn sources_interactive() -> Result<()> {
+    use dialoguer::{theme::ColorfulTheme, Input, Select};
+
+    loop {
+        let config = Config::load_or_default()?;
+        let sources = config.source_configs();
+
+        println!();
+        println!("{}", "Skill Sources".bold());
+        println!();
+
+        if sources.is_empty() {
+            println!("  {}", "(no sources configured)".dimmed());
+        } else {
+            for (i, source) in sources.iter().enumerate() {
+                let type_label = match source {
+                    SourceConfig::Local { .. } => "local",
+                    SourceConfig::Git { .. } => "git",
+                };
+                let priority = format!("[{}]", i + 1).dimmed();
+                println!("  {} {} {}", priority, source.display().cyan(), format!("({})", type_label).dimmed());
+            }
+        }
+        println!();
+
+        let mut options = vec!["Add source", "Remove source"];
+        if sources.len() > 1 {
+            options.push("Change priority");
+        }
+        options.push("Done");
+
+        let selection = Select::with_theme(&ColorfulTheme::default())
+            .with_prompt("What would you like to do?")
+            .items(&options)
+            .default(options.len() - 1)
+            .interact()?;
+
+        match options[selection] {
+            "Add source" => {
+                let path: String = Input::with_theme(&ColorfulTheme::default())
+                    .with_prompt("Enter path or git URL")
+                    .interact_text()?;
+                sources_add(path)?;
+            }
+            "Remove source" => {
+                if sources.is_empty() {
+                    println!("{}", "No sources to remove.".yellow());
+                    continue;
+                }
+                let source_names: Vec<&str> = sources.iter().map(|s| s.display()).collect();
+                let sel = Select::with_theme(&ColorfulTheme::default())
+                    .with_prompt("Select source to remove")
+                    .items(&source_names)
+                    .interact()?;
+                sources_remove(source_names[sel].to_string())?;
+            }
+            "Change priority" => {
+                if sources.len() < 2 {
+                    continue;
+                }
+                let source_names: Vec<String> = sources
+                    .iter()
+                    .enumerate()
+                    .map(|(i, s)| format!("[{}] {}", i + 1, s.display()))
+                    .collect();
+                let sel = Select::with_theme(&ColorfulTheme::default())
+                    .with_prompt("Select source to move")
+                    .items(&source_names)
+                    .interact()?;
+
+                let positions: Vec<String> = (1..=sources.len())
+                    .map(|i| format!("Position {}", i))
+                    .collect();
+                let new_pos = Select::with_theme(&ColorfulTheme::default())
+                    .with_prompt("Move to position")
+                    .items(&positions)
+                    .default(sel)
+                    .interact()?;
+
+                if sel != new_pos {
+                    let mut config = Config::load_or_default()?;
+                    config.move_source(sel, new_pos)?;
+                    config.save()?;
+                    println!("{}", "Priority updated.".green());
+                }
+            }
+            "Done" => break,
+            _ => break,
+        }
+    }
+
+    Ok(())
+}
+
+fn sources_list(config: &Config) -> Result<()> {
+    println!("{}", "Configured sources:".bold());
+    println!();
+
+    let sources = config.source_configs();
+    if sources.is_empty() {
+        println!("  {}", "(none)".dimmed());
+        println!();
+        println!("Add a source with: skm sources add <path>");
+    } else {
+        for (i, source) in sources.iter().enumerate() {
+            let type_label = match source {
+                SourceConfig::Local { .. } => "local",
+                SourceConfig::Git { .. } => "git",
+            };
+            println!("  {}. {} {}", i + 1, source.display().cyan(), format!("({})", type_label).dimmed());
+        }
+    }
+    println!();
+
+    Ok(())
+}
+
+fn sources_add(path: String) -> Result<()> {
+    let mut config = Config::load_or_default()?;
+
+    // Determine if this is a git URL or local path
+    let source = if path.starts_with("https://") || path.starts_with("git@") || path.ends_with(".git") {
+        SourceConfig::Git { url: path.clone() }
+    } else {
+        // Normalize local path
+        let normalized = if path.starts_with("~/") || path.starts_with('/') {
+            path.clone()
+        } else {
+            // Make relative path absolute
+            let cwd = std::env::current_dir()?;
+            cwd.join(&path).to_string_lossy().to_string()
+        };
+        SourceConfig::Local { path: normalized }
+    };
+
+    // Check if path exists for local sources
+    if let SourceConfig::Local { ref path } = source {
+        let expanded = if path.starts_with("~/") {
+            let home = std::env::var("HOME")?;
+            PathBuf::from(format!("{}/{}", home, &path[2..]))
+        } else {
+            PathBuf::from(path)
+        };
+
+        if !expanded.exists() {
+            println!("{} Path does not exist: {}", "Warning:".yellow(), path);
+        }
+    }
+
+    config.add_source(source);
+    config.save()?;
+
+    println!("{} {}", "Added source:".green(), path);
+
+    Ok(())
+}
+
+fn sources_remove(path: String) -> Result<()> {
+    let mut config = Config::load_or_default()?;
+
+    if config.remove_source(&path) {
+        config.save()?;
+        println!("{} {}", "Removed source:".green(), path);
+    } else {
+        println!("{} Source not found: {}", "Error:".red(), path);
+    }
+
+    Ok(())
+}
+
+fn update_sources(config: &Config) -> Result<()> {
+    let git_sources = config.git_sources();
+
+    if git_sources.is_empty() {
+        println!("{}", "No git sources configured.".yellow());
+        println!("Add a git source with: skm sources add <git-url>");
+        return Ok(());
+    }
+
+    println!("{}", "Updating git sources...".bold());
+    println!();
+
+    let mut updated = 0;
+    let mut already_current = 0;
+    let mut errors = 0;
+
+    for source in git_sources {
+        print!("  {} {}... ", "Updating".cyan(), source.url());
+
+        match source.pull() {
+            Ok(true) => {
+                println!("{}", "updated".green());
+                updated += 1;
+            }
+            Ok(false) => {
+                println!("{}", "already up to date".dimmed());
+                already_current += 1;
+            }
+            Err(e) => {
+                println!("{}: {}", "error".red(), e);
+                errors += 1;
+            }
+        }
+    }
+
+    println!();
+    if updated > 0 {
+        println!("  {} {} source(s) updated", "".green(), updated);
+    }
+    if already_current > 0 {
+        println!("  {} {} source(s) already up to date", "".dimmed(), already_current);
+    }
+    if errors > 0 {
+        println!("  {} {} source(s) failed", "".red(), errors);
+    }
+
+    Ok(())
+}
+
+fn list_bundles(config: &Config) -> Result<()> {
+    let sources = config.sources();
+
+    if sources.is_empty() {
+        println!("{}", "No sources configured.".yellow());
+        println!("Add a source with: skm sources add <path>");
+        return Ok(());
+    }
+
+    println!("{}", "Available bundles:".bold());
+    println!();
+
+    let mut found_any = false;
+    let mut had_errors = false;
+
+    for source in sources {
+        // Handle source errors gracefully - warn and continue
+        let bundles = match source.list_bundles() {
+            Ok(b) => b,
+            Err(e) => {
+                eprintln!(
+                    "  {} {} - {}",
+                    "Warning:".yellow(),
+                    source.display_path(),
+                    e
+                );
+                had_errors = true;
+                continue;
+            }
+        };
+
+        if bundles.is_empty() {
+            continue;
+        }
+
+        found_any = true;
+        println!("  {} {}", "Source:".dimmed(), source.display_path());
+
+        for bundle in bundles {
+            println!("    {}/", bundle.name.cyan());
+
+            let skill_count = bundle.skills.len();
+            let agent_count = bundle.agents.len();
+            let command_count = bundle.commands.len();
+
+            if skill_count > 0 {
+                println!("      {:<10} {} files", "skills/", skill_count);
+            }
+            if agent_count > 0 {
+                println!("      {:<10} {} files", "agents/", agent_count);
+            }
+            if command_count > 0 {
+                println!("      {:<10} {} files", "commands/", command_count);
+            }
+        }
+        println!();
+    }
+
+    if !found_any {
+        if had_errors {
+            println!("  {}", "(no accessible bundles found)".dimmed());
+        } else {
+            println!("  {}", "(no bundles found in configured sources)".dimmed());
+        }
+        println!();
+    }
+
+    Ok(())
+}
+
+fn show_installed_skills(base: &PathBuf, filter_tool: Option<&str>) -> Result<()> {
+    use crate::discover::{discover_installed, filter_by_tool, group_by_tool, InstalledTool, SkillType};
+
+    let mut skills = discover_installed(base)?;
+
+    // Apply filter if provided
+    if let Some(tool_filter) = filter_tool {
+        skills = filter_by_tool(skills, tool_filter);
+    }
+
+    if skills.is_empty() {
+        if filter_tool.is_some() {
+            println!("{}", "No installed skills found for the specified tool.".yellow());
+        } else {
+            println!("{}", "No installed skills found.".yellow());
+        }
+        println!();
+        println!("Install skills with: skm <bundle>");
+        return Ok(());
+    }
+
+    println!("{}", "Installed skills:".bold());
+    println!();
+
+    let grouped = group_by_tool(&skills);
+
+    // Define tool order
+    let tool_order = [InstalledTool::Claude, InstalledTool::OpenCode, InstalledTool::Cursor];
+
+    for tool in &tool_order {
+        if let Some(type_map) = grouped.get(tool) {
+            println!("  {}", tool.display_name().cyan().bold());
+
+            // Define type order
+            let type_order = [SkillType::Skill, SkillType::Agent, SkillType::Command];
+
+            for skill_type in &type_order {
+                if let Some(skill_list) = type_map.get(skill_type) {
+                    if !skill_list.is_empty() {
+                        println!("    {}/", skill_type.plural().dimmed());
+
+                        for skill in skill_list {
+                            let display_name = if let Some(ref bundle) = skill.bundle {
+                                format!("{}/{}", bundle, skill.name)
+                            } else {
+                                skill.name.clone()
+                            };
+                            println!("      {}", display_name);
+                        }
+                    }
+                }
+            }
+            println!();
+        }
+    }
+
+    // Show summary
+    let total = skills.len();
+    let by_tool: std::collections::HashMap<_, usize> = skills
+        .iter()
+        .fold(std::collections::HashMap::new(), |mut acc, s| {
+            *acc.entry(s.tool).or_insert(0) += 1;
+            acc
+        });
+
+    let summary_parts: Vec<String> = tool_order
+        .iter()
+        .filter_map(|t| by_tool.get(t).map(|count| format!("{} {}", count, t.display_name())))
+        .collect();
+
+    println!(
+        "  {} {} total ({})",
+        "".dimmed(),
+        total,
+        summary_parts.join(", ")
+    );
+    println!();
+
+    Ok(())
+}
+
+fn generate_completions(shell: Shell) {
+    let mut cmd = Cli::command();
+    generate(shell, &mut cmd, "skm", &mut io::stdout());
+}
+
+fn interactive_remove(base: &PathBuf, filter_tool: Option<&str>) -> Result<()> {
+    use crate::discover::{discover_installed, filter_by_tool, group_same_skills, remove_skill};
+    use dialoguer::{theme::ColorfulTheme, Confirm, MultiSelect};
+
+    let mut skills = discover_installed(base)?;
+
+    if let Some(tool_filter) = filter_tool {
+        skills = filter_by_tool(skills, tool_filter);
+    }
+
+    if skills.is_empty() {
+        println!("{}", "No installed skills found.".yellow());
+        return Ok(());
+    }
+
+    // Group skills by unique ID (same skill across multiple tools)
+    let grouped = group_same_skills(&skills);
+    let mut skill_ids: Vec<_> = grouped.keys().cloned().collect();
+    skill_ids.sort();
+
+    // Build display items for multi-select
+    let display_items: Vec<String> = skill_ids
+        .iter()
+        .map(|id| {
+            let instances = grouped.get(id).unwrap();
+            let tools: Vec<&str> = instances.iter().map(|s| s.tool.display_name()).collect();
+            format!("{} ({})", id, tools.join(", "))
+        })
+        .collect();
+
+    // Show multi-select
+    println!("{}", "Select skills to remove:".bold());
+    println!("{}", "(space to toggle, enter to confirm)".dimmed());
+    println!();
+
+    let selections = MultiSelect::with_theme(&ColorfulTheme::default())
+        .items(&display_items)
+        .interact()?;
+
+    if selections.is_empty() {
+        println!("{}", "No skills selected.".yellow());
+        return Ok(());
+    }
+
+    // Collect skills to remove
+    let mut to_remove: Vec<&crate::discover::InstalledSkill> = Vec::new();
+    for idx in &selections {
+        let id = &skill_ids[*idx];
+        if let Some(instances) = grouped.get(id) {
+            to_remove.extend(instances.iter().copied());
+        }
+    }
+
+    // Build summary
+    let summary: Vec<String> = selections
+        .iter()
+        .map(|idx| {
+            let id = &skill_ids[*idx];
+            let instances = grouped.get(id).unwrap();
+            let tools: Vec<&str> = instances.iter().map(|s| s.tool.display_name()).collect();
+            format!("  {} from {}", id.cyan(), tools.join(", "))
+        })
+        .collect();
+
+    println!();
+    println!("{}", "Will remove:".bold());
+    for line in &summary {
+        println!("{}", line);
+    }
+    println!();
+
+    // Confirm
+    let confirm = Confirm::with_theme(&ColorfulTheme::default())
+        .with_prompt(format!("Remove {} skill(s)?", to_remove.len()))
+        .default(false)
+        .interact()?;
+
+    if !confirm {
+        println!("{}", "Cancelled.".yellow());
+        return Ok(());
+    }
+
+    // Remove the skills
+    let mut removed = 0;
+    let mut errors = 0;
+
+    for skill in to_remove {
+        match remove_skill(skill) {
+            Ok(()) => {
+                removed += 1;
+            }
+            Err(e) => {
+                eprintln!("{}: Failed to remove {}: {}", "Error".red(), skill.path.display(), e);
+                errors += 1;
+            }
+        }
+    }
+
+    println!();
+    if removed > 0 {
+        println!("{} Removed {} skill(s)", "".green(), removed);
+    }
+    if errors > 0 {
+        println!("{} Failed to remove {} skill(s)", "".red(), errors);
+    }
+
+    Ok(())
+}
+
+fn clean_all_skills(base: &PathBuf, filter_tool: Option<&str>, skip_confirm: bool) -> Result<()> {
+    use crate::discover::{discover_installed, filter_by_tool, remove_skill};
+    use dialoguer::{theme::ColorfulTheme, Confirm};
+
+    let mut skills = discover_installed(base)?;
+
+    if let Some(tool_filter) = filter_tool {
+        skills = filter_by_tool(skills, tool_filter);
+    }
+
+    if skills.is_empty() {
+        println!("{}", "No installed skills found.".yellow());
+        return Ok(());
+    }
+
+    let count = skills.len();
+    let tool_desc = filter_tool
+        .map(|t| format!(" for {}", t))
+        .unwrap_or_default();
+
+    println!("{} {} skill(s){}", "Found".bold(), count, tool_desc);
+    println!();
+
+    // Confirm unless --yes flag
+    let confirmed = if skip_confirm {
+        true
+    } else {
+        Confirm::with_theme(&ColorfulTheme::default())
+            .with_prompt(format!("Remove all {} skill(s)?", count))
+            .default(false)
+            .interact()?
+    };
+
+    if !confirmed {
+        println!("{}", "Cancelled.".yellow());
+        return Ok(());
+    }
+
+    // Remove all skills
+    let mut removed = 0;
+    let mut errors = 0;
+
+    for skill in &skills {
+        match remove_skill(skill) {
+            Ok(()) => {
+                removed += 1;
+            }
+            Err(e) => {
+                eprintln!("{}: Failed to remove {}: {}", "Error".red(), skill.path.display(), e);
+                errors += 1;
+            }
+        }
+    }
+
+    println!();
+    if removed > 0 {
+        println!("{} Removed {} skill(s)", "".green(), removed);
+    }
+    if errors > 0 {
+        println!("{} Failed to remove {} skill(s)", "".red(), errors);
+    }
+
+    Ok(())
+}

@@ -1,0 +1,6 @@
+[llm]
+provider = "xai"
+model = "grok-code-fast-1"
+smart_model = "grok-4-1-fast-reasoning"
+fast_model = "grok-code-fast-1"
+max_tokens = 16000

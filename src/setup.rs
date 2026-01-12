@@ -7,7 +7,10 @@ use crate::config::{Config, SourceConfig};
 /// Run the first-time setup wizard
 pub fn run_setup_wizard() -> Result<Config> {
     println!();
-    println!("{}", "No config found. Let's set up your skill sources.".bold());
+    println!(
+        "{}",
+        "No config found. Let's set up your skill sources.".bold()
+    );
     println!();
 
     let options = vec![
@@ -51,7 +54,10 @@ pub fn run_setup_wizard() -> Result<Config> {
         2 => {
             // Skip
             println!();
-            println!("{}", "  Skipping source setup. Add sources later with:".dimmed());
+            println!(
+                "{}",
+                "  Skipping source setup. Add sources later with:".dimmed()
+            );
             println!("    skm sources add <path>");
             vec![]
         }
@@ -63,13 +69,8 @@ pub fn run_setup_wizard() -> Result<Config> {
 
     let config_path = Config::config_path()?;
     println!();
-    println!(
-        "{} {}",
-        "Config saved to:".green(),
-        config_path.display()
-    );
+    println!("{} {}", "Config saved to:".green(), config_path.display());
     println!();
 
     Ok(config)
 }
-

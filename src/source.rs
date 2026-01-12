@@ -42,10 +42,7 @@ impl Source for LocalSource {
             }
 
             // Skip hidden directories and 'shell' directory
-            let name = path
-                .file_name()
-                .and_then(|n| n.to_str())
-                .unwrap_or("");
+            let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
 
             if name.starts_with('.') || name == "shell" {
                 continue;
@@ -113,9 +110,7 @@ impl GitSource {
             url.strip_prefix("https://").unwrap_or(url).to_string()
         } else if url.starts_with("git@") {
             // git@github.com:user/repo -> github.com/user/repo
-            url.strip_prefix("git@")
-                .unwrap_or(url)
-                .replace(':', "/")
+            url.strip_prefix("git@").unwrap_or(url).replace(':', "/")
         } else {
             url.to_string()
         }

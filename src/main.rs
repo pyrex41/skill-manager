@@ -59,6 +59,10 @@ struct Cli {
     /// Filter: only install commands
     #[arg(long = "commands")]
     commands_only: bool,
+
+    /// Filter: only install rules
+    #[arg(long = "rules")]
+    rules_only: bool,
 }
 
 #[derive(Subcommand)]
@@ -100,6 +104,17 @@ enum Commands {
         /// Shell to generate completions for
         #[arg(value_enum)]
         shell: Shell,
+    },
+    /// Convert between rule and command formats
+    Convert {
+        /// Source file to convert
+        source: PathBuf,
+        /// Convert to rule format (default: convert to command format)
+        #[arg(long)]
+        to_rule: bool,
+        /// Output file (default: stdout)
+        #[arg(short, long)]
+        output: Option<PathBuf>,
     },
 }
 
@@ -150,7 +165,7 @@ fn main() -> Result<()> {
     };
 
     // Determine which types to install
-    let types = if cli.skills_only || cli.agents_only || cli.commands_only {
+    let types = if cli.skills_only || cli.agents_only || cli.commands_only || cli.rules_only {
         let mut t = vec![];
         if cli.skills_only {
             t.push(SkillType::Skill);
@@ -161,13 +176,23 @@ fn main() -> Result<()> {
         if cli.commands_only {
             t.push(SkillType::Command);
         }
+        if cli.rules_only {
+            t.push(SkillType::Rule);
+        }
         t
     } else {
-        vec![SkillType::Skill, SkillType::Agent, SkillType::Command]
+        vec![
+            SkillType::Skill,
+            SkillType::Agent,
+            SkillType::Command,
+            SkillType::Rule,
+        ]
     };
 
     match cli.command {
-        Some(Commands::Add { bundle: bundle_name }) => {
+        Some(Commands::Add {
+            bundle: bundle_name,
+        }) => {
             // `skm add <bundle>` is an alias for `skm <bundle>`
             install_bundle(&config, &bundle_name, &tool, &target_dir, &types)?;
         }
@@ -189,7 +214,12 @@ fn main() -> Result<()> {
                 sources_interactive()?;
             }
         },
-        Some(Commands::Here { tool: filter_tool, remove, clean, yes }) => {
+        Some(Commands::Here {
+            tool: filter_tool,
+            remove,
+            clean,
+            yes,
+        }) => {
             if remove {
                 interactive_remove(&target_dir, filter_tool.as_deref())?;
             } else if clean {
@@ -203,6 +233,13 @@ fn main() -> Result<()> {
         }
         Some(Commands::Completions { shell }) => {
             generate_completions(shell);
+        }
+        Some(Commands::Convert {
+            source,
+            to_rule,
+            output,
+        }) => {
+            convert_format(&source, to_rule, output.as_ref())?;
         }
         None => {
             // No subcommand - either list bundles or install a bundle
@@ -220,8 +257,8 @@ fn main() -> Result<()> {
 }
 
 fn browse_bundles(config: &Config) -> Result<()> {
-    use dialoguer::{theme::ColorfulTheme, Select};
     use crate::bundle::Bundle;
+    use dialoguer::{theme::ColorfulTheme, Select};
 
     let sources = config.sources();
 
@@ -242,7 +279,12 @@ fn browse_bundles(config: &Config) -> Result<()> {
                 }
             }
             Err(e) => {
-                eprintln!("  {} {} - {}", "Warning:".yellow(), source.display_path(), e);
+                eprintln!(
+                    "  {} {} - {}",
+                    "Warning:".yellow(),
+                    source.display_path(),
+                    e
+                );
             }
         }
     }
@@ -266,7 +308,12 @@ fn browse_bundles(config: &Config) -> Result<()> {
                     bundle.agents.len(),
                     bundle.commands.len()
                 );
-                format!("{:<20} {} {}", bundle.name, counts.dimmed(), format!("({})", source).dimmed())
+                format!(
+                    "{:<20} {} {}",
+                    bundle.name,
+                    counts.dimmed(),
+                    format!("({})", source).dimmed()
+                )
             })
             .collect();
 
@@ -301,9 +348,17 @@ fn show_bundle_details(bundle: &crate::bundle::Bundle) -> Result<()> {
         let mut items: Vec<String> = Vec::new();
         let mut file_paths: Vec<Option<std::path::PathBuf>> = Vec::new();
 
-        for (section, files) in [("skills", &bundle.skills), ("agents", &bundle.agents), ("commands", &bundle.commands)] {
+        for (section, files) in [
+            ("skills", &bundle.skills),
+            ("agents", &bundle.agents),
+            ("commands", &bundle.commands),
+        ] {
             if !files.is_empty() {
-                items.push(format!("── {}/{} ──", section, format!(" ({} files)", files.len()).dimmed()));
+                items.push(format!(
+                    "── {}/{} ──",
+                    section,
+                    format!(" ({} files)", files.len()).dimmed()
+                ));
                 file_paths.push(None); // section header
 
                 for file in files {
@@ -341,7 +396,10 @@ fn show_bundle_details(bundle: &crate::bundle::Bundle) -> Result<()> {
             }
             let line_count = content.lines().count();
             if line_count > 40 {
-                println!("{}", format!("... ({} more lines)", line_count - 40).dimmed());
+                println!(
+                    "{}",
+                    format!("... ({} more lines)", line_count - 40).dimmed()
+                );
             }
         }
         println!("{}", "─".repeat(60).dimmed());
@@ -394,7 +452,12 @@ fn sources_interactive() -> Result<()> {
                     SourceConfig::Git { .. } => "git",
                 };
                 let priority = format!("[{}]", i + 1).dimmed();
-                println!("  {} {} {}", priority, source.display().cyan(), format!("({})", type_label).dimmed());
+                println!(
+                    "  {} {} {}",
+                    priority,
+                    source.display().cyan(),
+                    format!("({})", type_label).dimmed()
+                );
             }
         }
         println!();
@@ -483,7 +546,12 @@ fn sources_list(config: &Config) -> Result<()> {
                 SourceConfig::Local { .. } => "local",
                 SourceConfig::Git { .. } => "git",
             };
-            println!("  {}. {} {}", i + 1, source.display().cyan(), format!("({})", type_label).dimmed());
+            println!(
+                "  {}. {} {}",
+                i + 1,
+                source.display().cyan(),
+                format!("({})", type_label).dimmed()
+            );
         }
     }
     println!();
@@ -495,19 +563,20 @@ fn sources_add(path: String) -> Result<()> {
     let mut config = Config::load_or_default()?;
 
     // Determine if this is a git URL or local path
-    let source = if path.starts_with("https://") || path.starts_with("git@") || path.ends_with(".git") {
-        SourceConfig::Git { url: path.clone() }
-    } else {
-        // Normalize local path
-        let normalized = if path.starts_with("~/") || path.starts_with('/') {
-            path.clone()
+    let source =
+        if path.starts_with("https://") || path.starts_with("git@") || path.ends_with(".git") {
+            SourceConfig::Git { url: path.clone() }
         } else {
-            // Make relative path absolute
-            let cwd = std::env::current_dir()?;
-            cwd.join(&path).to_string_lossy().to_string()
+            // Normalize local path
+            let normalized = if path.starts_with("~/") || path.starts_with('/') {
+                path.clone()
+            } else {
+                // Make relative path absolute
+                let cwd = std::env::current_dir()?;
+                cwd.join(&path).to_string_lossy().to_string()
+            };
+            SourceConfig::Local { path: normalized }
         };
-        SourceConfig::Local { path: normalized }
-    };
 
     // Check if path exists for local sources
     if let SourceConfig::Local { ref path } = source {
@@ -584,7 +653,11 @@ fn update_sources(config: &Config) -> Result<()> {
         println!("  {} {} source(s) updated", "".green(), updated);
     }
     if already_current > 0 {
-        println!("  {} {} source(s) already up to date", "".dimmed(), already_current);
+        println!(
+            "  {} {} source(s) already up to date",
+            "".dimmed(),
+            already_current
+        );
     }
     if errors > 0 {
         println!("  {} {} source(s) failed", "".red(), errors);
@@ -664,7 +737,9 @@ fn list_bundles(config: &Config) -> Result<()> {
 }
 
 fn show_installed_skills(base: &PathBuf, filter_tool: Option<&str>) -> Result<()> {
-    use crate::discover::{discover_installed, filter_by_tool, group_by_tool, InstalledTool, SkillType};
+    use crate::discover::{
+        discover_installed, filter_by_tool, group_by_tool, InstalledTool, SkillType,
+    };
 
     let mut skills = discover_installed(base)?;
 
@@ -675,7 +750,10 @@ fn show_installed_skills(base: &PathBuf, filter_tool: Option<&str>) -> Result<()
 
     if skills.is_empty() {
         if filter_tool.is_some() {
-            println!("{}", "No installed skills found for the specified tool.".yellow());
+            println!(
+                "{}",
+                "No installed skills found for the specified tool.".yellow()
+            );
         } else {
             println!("{}", "No installed skills found.".yellow());
         }
@@ -690,7 +768,11 @@ fn show_installed_skills(base: &PathBuf, filter_tool: Option<&str>) -> Result<()
     let grouped = group_by_tool(&skills);
 
     // Define tool order
-    let tool_order = [InstalledTool::Claude, InstalledTool::OpenCode, InstalledTool::Cursor];
+    let tool_order = [
+        InstalledTool::Claude,
+        InstalledTool::OpenCode,
+        InstalledTool::Cursor,
+    ];
 
     for tool in &tool_order {
         if let Some(type_map) = grouped.get(tool) {
@@ -721,16 +803,21 @@ fn show_installed_skills(base: &PathBuf, filter_tool: Option<&str>) -> Result<()
 
     // Show summary
     let total = skills.len();
-    let by_tool: std::collections::HashMap<_, usize> = skills
-        .iter()
-        .fold(std::collections::HashMap::new(), |mut acc, s| {
-            *acc.entry(s.tool).or_insert(0) += 1;
-            acc
-        });
+    let by_tool: std::collections::HashMap<_, usize> =
+        skills
+            .iter()
+            .fold(std::collections::HashMap::new(), |mut acc, s| {
+                *acc.entry(s.tool).or_insert(0) += 1;
+                acc
+            });
 
     let summary_parts: Vec<String> = tool_order
         .iter()
-        .filter_map(|t| by_tool.get(t).map(|count| format!("{} {}", count, t.display_name())))
+        .filter_map(|t| {
+            by_tool
+                .get(t)
+                .map(|count| format!("{} {}", count, t.display_name()))
+        })
         .collect();
 
     println!(
@@ -841,7 +928,12 @@ fn interactive_remove(base: &PathBuf, filter_tool: Option<&str>) -> Result<()> {
                 removed += 1;
             }
             Err(e) => {
-                eprintln!("{}: Failed to remove {}: {}", "Error".red(), skill.path.display(), e);
+                eprintln!(
+                    "{}: Failed to remove {}: {}",
+                    "Error".red(),
+                    skill.path.display(),
+                    e
+                );
                 errors += 1;
             }
         }
@@ -906,7 +998,12 @@ fn clean_all_skills(base: &PathBuf, filter_tool: Option<&str>, skip_confirm: boo
                 removed += 1;
             }
             Err(e) => {
-                eprintln!("{}: Failed to remove {}: {}", "Error".red(), skill.path.display(), e);
+                eprintln!(
+                    "{}: Failed to remove {}: {}",
+                    "Error".red(),
+                    skill.path.display(),
+                    e
+                );
                 errors += 1;
             }
         }
@@ -921,4 +1018,132 @@ fn clean_all_skills(base: &PathBuf, filter_tool: Option<&str>, skip_confirm: boo
     }
 
     Ok(())
+}
+
+fn convert_format(source: &PathBuf, to_rule: bool, output: Option<&PathBuf>) -> Result<()> {
+    use std::fs;
+    use std::io::Write;
+
+    if !source.exists() {
+        println!(
+            "{} Source file does not exist: {}",
+            "Error:".red(),
+            source.display()
+        );
+        return Ok(());
+    }
+
+    let content = fs::read_to_string(source)?;
+    let converted = if to_rule {
+        convert_to_rule(&content, source)
+    } else {
+        convert_to_command(&content)
+    };
+
+    match output {
+        Some(output_path) => {
+            let mut file = fs::File::create(output_path)?;
+            file.write_all(converted.as_bytes())?;
+            println!(
+                "{} Converted to {}",
+                "Success:".green(),
+                output_path.display()
+            );
+        }
+        None => {
+            println!("{}", converted);
+        }
+    }
+
+    Ok(())
+}
+
+fn convert_to_rule(content: &str, source_path: &PathBuf) -> String {
+    let lines: Vec<&str> = content.lines().collect();
+
+    // Check if already has frontmatter
+    if lines.first() == Some(&"---") {
+        // Already has frontmatter, assume it is already in rule format
+        return content.to_string();
+    }
+
+    // Extract title from filename or first heading
+    let name = source_path
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("converted-rule");
+
+    let title = if let Some(first_line) = lines.first() {
+        if first_line.starts_with("#") {
+            first_line.trim_start_matches("#").trim().to_string()
+        } else {
+            name.to_string()
+        }
+    } else {
+        name.to_string()
+    };
+
+    // Create rule frontmatter
+    let mut result = String::new();
+    result.push_str(
+        "---
+",
+    );
+    result.push_str(&format!(
+        "description: \"{}\"
+",
+        title
+    ));
+    result.push_str(
+        "alwaysApply: false
+",
+    );
+    result.push_str(
+        "---
+",
+    );
+    result.push_str(
+        "
+",
+    );
+    result.push_str(content);
+
+    result
+}
+
+fn convert_to_command(content: &str) -> String {
+    let lines: Vec<&str> = content.lines().collect();
+
+    // Check if it has frontmatter
+    if lines.first() == Some(&"---") {
+        // Find the end of frontmatter
+        let mut in_frontmatter = false;
+        let mut end_idx = 0;
+
+        for (i, line) in lines.iter().enumerate() {
+            if *line == "---" {
+                if in_frontmatter {
+                    end_idx = i + 1;
+                    break;
+                }
+                in_frontmatter = true;
+            }
+        }
+
+        // Skip frontmatter and return the rest
+        if end_idx > 0 && end_idx < lines.len() {
+            lines[end_idx..]
+                .join(
+                    "
+",
+                )
+                .trim_start()
+                .to_string()
+        } else {
+            content.to_string()
+        }
+    } else {
+        // No frontmatter, return as-is
+        content.to_string()
+    }
 }

@@ -96,15 +96,13 @@ impl Config {
                     let expanded = expand_tilde(path);
                     Some(Box::new(LocalSource::new(expanded)) as Box<dyn Source>)
                 }
-                SourceConfig::Git { url } => {
-                    match GitSource::new(url.clone()) {
-                        Ok(source) => Some(Box::new(source) as Box<dyn Source>),
-                        Err(e) => {
-                            eprintln!("Warning: Could not initialize git source {}: {}", url, e);
-                            None
-                        }
+                SourceConfig::Git { url } => match GitSource::new(url.clone()) {
+                    Ok(source) => Some(Box::new(source) as Box<dyn Source>),
+                    Err(e) => {
+                        eprintln!("Warning: Could not initialize git source {}: {}", url, e);
+                        None
                     }
-                }
+                },
             })
             .collect()
     }
@@ -166,7 +164,10 @@ impl Config {
     }
 
     /// Find a bundle by name across all sources
-    pub fn find_bundle(&self, name: &str) -> Result<Option<(Box<dyn Source>, crate::bundle::Bundle)>> {
+    pub fn find_bundle(
+        &self,
+        name: &str,
+    ) -> Result<Option<(Box<dyn Source>, crate::bundle::Bundle)>> {
         for source in self.sources() {
             // Skip sources that fail to list (they'll be warned about elsewhere)
             let bundles = match source.list_bundles() {
@@ -220,7 +221,10 @@ mod tests {
             expand_tilde("~/.claude-skills"),
             PathBuf::from(format!("{}/.claude-skills", home))
         );
-        assert_eq!(expand_tilde("/absolute/path"), PathBuf::from("/absolute/path"));
+        assert_eq!(
+            expand_tilde("/absolute/path"),
+            PathBuf::from("/absolute/path")
+        );
     }
 
     #[test]

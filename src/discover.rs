@@ -161,6 +161,78 @@ fn discover_claude(base: &Path) -> Result<Vec<InstalledSkill>> {
         }
     }
 
+    // .claude/skills/**/*.md -> skills
+    let skills_dir = claude_dir.join("skills");
+    if skills_dir.exists() {
+        for entry in WalkDir::new(&skills_dir)
+            .into_iter()
+            .filter_map(|e| e.ok())
+            .filter(|e| e.file_type().is_file())
+            .filter(|e| e.path().extension().map(|ext| ext == "md").unwrap_or(false))
+        {
+            let path = entry.path().to_path_buf();
+            let name = path
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .unwrap_or("")
+                .to_string();
+
+            let bundle = path.parent().and_then(|p| {
+                if p != skills_dir {
+                    p.file_name().and_then(|n| n.to_str()).map(String::from)
+                } else {
+                    None
+                }
+            });
+
+            if !name.is_empty() {
+                skills.push(InstalledSkill {
+                    name,
+                    skill_type: SkillType::Skill,
+                    tool: InstalledTool::Claude,
+                    path,
+                    bundle,
+                });
+            }
+        }
+    }
+
+    // .claude/rules/**/*.md -> rules
+    let rules_dir = claude_dir.join("rules");
+    if rules_dir.exists() {
+        for entry in WalkDir::new(&rules_dir)
+            .into_iter()
+            .filter_map(|e| e.ok())
+            .filter(|e| e.file_type().is_file())
+            .filter(|e| e.path().extension().map(|ext| ext == "md").unwrap_or(false))
+        {
+            let path = entry.path().to_path_buf();
+            let name = path
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .unwrap_or("")
+                .to_string();
+
+            let bundle = path.parent().and_then(|p| {
+                if p != rules_dir {
+                    p.file_name().and_then(|n| n.to_str()).map(String::from)
+                } else {
+                    None
+                }
+            });
+
+            if !name.is_empty() {
+                skills.push(InstalledSkill {
+                    name,
+                    skill_type: SkillType::Rule,
+                    tool: InstalledTool::Claude,
+                    path,
+                    bundle,
+                });
+            }
+        }
+    }
+
     Ok(skills)
 }
 
@@ -249,6 +321,35 @@ fn discover_opencode(base: &Path) -> Result<Vec<InstalledSkill>> {
                         path,
                         bundle: None,
                     });
+                }
+            }
+        }
+    }
+
+    // .opencode/rule/*/RULE.md -> rules
+    let rule_dir = opencode_dir.join("rule");
+    if rule_dir.exists() {
+        for entry in std::fs::read_dir(&rule_dir)? {
+            let entry = entry?;
+            let path = entry.path();
+            if path.is_dir() {
+                let rule_file = path.join("RULE.md");
+                if rule_file.exists() {
+                    let name = path
+                        .file_name()
+                        .and_then(|s| s.to_str())
+                        .unwrap_or("")
+                        .to_string();
+
+                    if !name.is_empty() {
+                        skills.push(InstalledSkill {
+                            name: name.clone(),
+                            skill_type: SkillType::Rule,
+                            tool: InstalledTool::OpenCode,
+                            path: rule_file,
+                            bundle: Some(name),
+                        });
+                    }
                 }
             }
         }

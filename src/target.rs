@@ -63,7 +63,10 @@ impl Tool {
                 SkillType::Command => ".opencode/command/".to_string(),
                 SkillType::Rule => format!(".opencode/rule/{}-*/", bundle_name),
             },
-            Tool::Cursor => format!(".cursor/rules/{}-*/", bundle_name),
+            Tool::Cursor => match skill_type {
+                SkillType::Skill => format!(".cursor/skills/{}-*/", bundle_name),
+                _ => format!(".cursor/rules/{}-*/", bundle_name),
+            },
         }
     }
 
@@ -140,7 +143,8 @@ impl Tool {
     }
 
     // Cursor:
-    //   All types -> .cursor/rules/{bundle}-{name}/RULE.md (folder-based)
+    //   skills -> .cursor/skills/{bundle}-{name}/SKILL.md (beta feature)
+    //   agents/commands/rules -> .cursor/rules/{bundle}-{name}/RULE.md (folder-based)
     fn write_cursor(
         &self,
         target_dir: &PathBuf,
@@ -149,14 +153,28 @@ impl Tool {
     ) -> Result<PathBuf> {
         let combined_name = format!("{}-{}", bundle_name, skill.name);
 
-        // All Cursor types now use folder-based rules
-        let dest_dir = target_dir.join(".cursor/rules").join(&combined_name);
-        fs::create_dir_all(&dest_dir)?;
+        match skill.skill_type {
+            SkillType::Skill => {
+                // Skills use the beta .cursor/skills/ directory with SKILL.md
+                let dest_dir = target_dir.join(".cursor/skills").join(&combined_name);
+                fs::create_dir_all(&dest_dir)?;
 
-        let dest_file = dest_dir.join("RULE.md");
-        transform_skill_file(&skill.path, &dest_file, &combined_name)?;
+                let dest_file = dest_dir.join("SKILL.md");
+                transform_skill_file(&skill.path, &dest_file, &combined_name)?;
 
-        Ok(dest_file)
+                Ok(dest_file)
+            }
+            _ => {
+                // Agents, commands, and rules use .cursor/rules/ with RULE.md
+                let dest_dir = target_dir.join(".cursor/rules").join(&combined_name);
+                fs::create_dir_all(&dest_dir)?;
+
+                let dest_file = dest_dir.join("RULE.md");
+                transform_skill_file(&skill.path, &dest_file, &combined_name)?;
+
+                Ok(dest_file)
+            }
+        }
     }
 }
 

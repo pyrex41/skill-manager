@@ -176,6 +176,19 @@ mod tests {
 
         let bundle = crate::bundle::Bundle::from_path(source_path.join("test-bundle")).unwrap();
 
+        // Test skill (should go to skills beta directory)
+        for skill in &bundle.skills {
+            Tool::Cursor
+                .write_file(&target_dir.path().to_path_buf(), "test-bundle", skill)
+                .unwrap();
+        }
+
+        // Verify skills folder-based structure (beta)
+        assert!(target_dir
+            .path()
+            .join(".cursor/skills/test-bundle-helper/SKILL.md")
+            .exists());
+
         // Test agent (should go to rules folder-based structure)
         for agent in &bundle.agents {
             Tool::Cursor

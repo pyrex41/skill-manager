@@ -41,14 +41,14 @@ This is a Rust CLI tool for managing AI coding assistant skills across Claude, O
 
 | Type | Claude | OpenCode | Cursor |
 |------|--------|----------|--------|
-| Skills | `.claude/skills/{bundle}/{name}.md` | `.opencode/skill/{bundle}-{name}/SKILL.md` | `.cursor/rules/{bundle}-{name}/RULE.md` (folder-based) |
-| Agents | `.claude/agents/{bundle}/{name}.md` | `.opencode/agent/{bundle}-{name}.md` | `.cursor/rules/{bundle}-{name}/RULE.md` (folder-based) |
-| Commands | `.claude/commands/{bundle}/{name}.md` | `.opencode/command/{bundle}-{name}.md` | `.cursor/rules/{bundle}-{name}/RULE.md` (folder-based) |
-| Rules | `.claude/rules/{bundle}/{name}.md` | `.opencode/rule/{bundle}-{name}/RULE.md` | `.cursor/rules/{bundle}-{name}/RULE.md` (folder-based) |
+| Skills | `.claude/skills/{bundle}/{name}.md` | `.opencode/skill/{bundle}-{name}/SKILL.md` | `.cursor/skills/{bundle}-{name}/SKILL.md` (beta) |
+| Agents | `.claude/agents/{bundle}/{name}.md` | `.opencode/agent/{bundle}-{name}.md` | `.cursor/rules/{bundle}-{name}/RULE.md` |
+| Commands | `.claude/commands/{bundle}/{name}.md` | `.opencode/command/{bundle}-{name}.md` | `.cursor/rules/{bundle}-{name}/RULE.md` |
+| Rules | `.claude/rules/{bundle}/{name}.md` | `.opencode/rule/{bundle}-{name}/RULE.md` | `.cursor/rules/{bundle}-{name}/RULE.md` |
 
-OpenCode and Cursor skills require YAML frontmatter with a `name` field - `target.rs:transform_skill_file()` adds this automatically.
+OpenCode and Cursor skills/rules require YAML frontmatter with a `name` field - `target.rs:transform_skill_file()` adds this automatically.
 
-**Cursor Rules Update**: Cursor now uses folder-based rules instead of individual `.mdc` files. Each rule is stored as a folder in `.cursor/rules/` containing a `RULE.md` file. The legacy skills beta support (`.cursor/skills/`) has been deprecated in favor of rules.
+**Cursor Support**: Cursor supports both folder-based skills (beta, `.cursor/skills/`) and rules (`.cursor/rules/`). Skills are installed to the beta skills directory, while agents, commands, and rules go to the rules directory.
 
 ### Key Dependencies
 

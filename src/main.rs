@@ -1085,27 +1085,11 @@ fn convert_to_rule(content: &str, source_path: &PathBuf) -> String {
 
     // Create rule frontmatter
     let mut result = String::new();
-    result.push_str(
-        "---
-",
-    );
-    result.push_str(&format!(
-        "description: \"{}\"
-",
-        title
-    ));
-    result.push_str(
-        "alwaysApply: false
-",
-    );
-    result.push_str(
-        "---
-",
-    );
-    result.push_str(
-        "
-",
-    );
+    result.push_str("---\n");
+    result.push_str(&format!("description: \"{}\"\n", title));
+    result.push_str("alwaysApply: false\n");
+    result.push_str("---\n");
+    result.push('\n');
     result.push_str(content);
 
     result
@@ -1132,18 +1116,78 @@ fn convert_to_command(content: &str) -> String {
 
         // Skip frontmatter and return the rest
         if end_idx > 0 && end_idx < lines.len() {
-            lines[end_idx..]
-                .join(
-                    "
-",
-                )
-                .trim_start()
-                .to_string()
+            lines[end_idx..].join("\n").trim_start().to_string()
         } else {
             content.to_string()
         }
     } else {
         // No frontmatter, return as-is
         content.to_string()
+    }
+}
+
+#[cfg(test)]
+mod convert_tests {
+    use super::*;
+
+    #[test]
+    fn test_convert_to_rule_no_frontmatter() {
+        let content = "# Test Rule\n\nSome content here";
+        let path = PathBuf::from("test-rule.md");
+        let result = convert_to_rule(content, &path);
+
+        assert!(result.starts_with("---\n"));
+        assert!(result.contains("description: \"Test Rule\""));
+        assert!(result.contains("alwaysApply: false"));
+        assert!(result.contains("# Test Rule"));
+    }
+
+    #[test]
+    fn test_convert_to_rule_with_existing_frontmatter() {
+        let content = "---\ndescription: existing\n---\n# Content";
+        let path = PathBuf::from("test.md");
+        let result = convert_to_rule(content, &path);
+
+        // Should return unchanged since it already has frontmatter
+        assert_eq!(result, content);
+    }
+
+    #[test]
+    fn test_convert_to_rule_uses_filename_when_no_heading() {
+        let content = "Some content without a heading";
+        let path = PathBuf::from("my-custom-rule.md");
+        let result = convert_to_rule(content, &path);
+
+        assert!(result.contains("description: \"my-custom-rule\""));
+    }
+
+    #[test]
+    fn test_convert_to_command_strips_frontmatter() {
+        let content =
+            "---\ndescription: test\nalwaysApply: false\n---\n# Rule Content\n\nBody here";
+        let result = convert_to_command(content);
+
+        assert!(!result.contains("---"));
+        assert!(!result.contains("description:"));
+        assert!(result.starts_with("# Rule Content"));
+        assert!(result.contains("Body here"));
+    }
+
+    #[test]
+    fn test_convert_to_command_no_frontmatter() {
+        let content = "# Simple Content\n\nNo frontmatter here";
+        let result = convert_to_command(content);
+
+        // Should return unchanged
+        assert_eq!(result, content);
+    }
+
+    #[test]
+    fn test_convert_to_command_only_frontmatter() {
+        let content = "---\ndescription: test\n---";
+        let result = convert_to_command(content);
+
+        // Edge case: only frontmatter, no content after
+        assert_eq!(result, content);
     }
 }

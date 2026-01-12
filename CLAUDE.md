@@ -41,11 +41,14 @@ This is a Rust CLI tool for managing AI coding assistant skills across Claude, O
 
 | Type | Claude | OpenCode | Cursor |
 |------|--------|----------|--------|
-| Skills | `.claude/skills/{bundle}/{name}.md` | `.opencode/skill/{bundle}-{name}/SKILL.md` | `.cursor/skills/{bundle}-{name}/SKILL.md` |
-| Agents | `.claude/agents/{bundle}/{name}.md` | `.opencode/agent/{bundle}-{name}.md` | `.cursor/rules/{bundle}-{name}.mdc` |
-| Commands | `.claude/commands/{bundle}/{name}.md` | `.opencode/command/{bundle}-{name}.md` | `.cursor/rules/{bundle}-{name}.mdc` |
+| Skills | `.claude/skills/{bundle}/{name}.md` | `.opencode/skill/{bundle}-{name}/SKILL.md` | `.cursor/rules/{bundle}-{name}/RULE.md` (folder-based) |
+| Agents | `.claude/agents/{bundle}/{name}.md` | `.opencode/agent/{bundle}-{name}.md` | `.cursor/rules/{bundle}-{name}/RULE.md` (folder-based) |
+| Commands | `.claude/commands/{bundle}/{name}.md` | `.opencode/command/{bundle}-{name}.md` | `.cursor/rules/{bundle}-{name}/RULE.md` (folder-based) |
+| Rules | `.claude/rules/{bundle}/{name}.md` | `.opencode/rule/{bundle}-{name}/RULE.md` | `.cursor/rules/{bundle}-{name}/RULE.md` (folder-based) |
 
 OpenCode and Cursor skills require YAML frontmatter with a `name` field - `target.rs:transform_skill_file()` adds this automatically.
+
+**Cursor Rules Update**: Cursor now uses folder-based rules instead of individual `.mdc` files. Each rule is stored as a folder in `.cursor/rules/` containing a `RULE.md` file. The legacy skills beta support (`.cursor/skills/`) has been deprecated in favor of rules.
 
 ### Key Dependencies
 
@@ -53,3 +56,53 @@ OpenCode and Cursor skills require YAML frontmatter with a `name` field - `targe
 - `git2` - Git operations (clone, fetch, fast-forward)
 - `dialoguer` - Interactive prompts for setup wizard and skill removal
 - `walkdir` - Recursive directory traversal for discovery
+
+## SCUD Task Management
+
+This project uses SCUD Task Manager for task management.
+
+### Session Workflow
+
+1. **Start of session**: Run `scud warmup` to orient yourself
+   - Shows current working directory and recent git history
+   - Displays active tag, task counts, and any stale locks
+   - Identifies the next available task
+
+2. **Claim a task**: Use `/scud:task-next` or `scud next --claim --name "Claude"`
+   - Always claim before starting work to prevent conflicts
+   - Task context is stored in `.scud/current-task`
+
+3. **Work on the task**: Implement the requirements
+   - Reference task details with `/scud:task-show <id>`
+   - Dependencies are automatically tracked by the DAG
+
+4. **Commit with context**: Use `scud commit -m "message"` or `scud commit -a -m "message"`
+   - Automatically prefixes commits with `[TASK-ID]`
+   - Uses task title as default commit message if none provided
+
+5. **Complete the task**: Mark done with `/scud:task-status <id> done`
+   - The stop hook will prompt for task completion
+
+### Progress Journaling
+
+Keep a brief progress log during complex tasks:
+
+```
+## Progress Log
+
+### Session: 2025-01-15
+- Investigated auth module, found issue in token refresh
+- Updated refresh logic to handle edge case
+- Tests passing, ready for review
+```
+
+This helps maintain continuity across sessions and provides context for future work.
+
+### Key Commands
+
+- `scud warmup` - Session orientation
+- `scud next` - Find next available task
+- `scud show <id>` - View task details
+- `scud set-status <id> <status>` - Update task status
+- `scud commit` - Task-aware git commit
+- `scud stats` - View completion statistics

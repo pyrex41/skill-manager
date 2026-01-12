@@ -6,6 +6,7 @@ pub enum SkillType {
     Skill,
     Agent,
     Command,
+    Rule,
 }
 
 impl SkillType {
@@ -14,6 +15,7 @@ impl SkillType {
             SkillType::Skill => "skills",
             SkillType::Agent => "agents",
             SkillType::Command => "commands",
+            SkillType::Rule => "rules",
         }
     }
 }
@@ -29,7 +31,7 @@ pub struct SkillFile {
     pub skill_type: SkillType,
 }
 
-/// A bundle containing skills, agents, and commands
+/// A bundle containing skills, agents, commands, and rules
 #[derive(Debug, Clone)]
 pub struct Bundle {
     /// Bundle name (e.g., "cl", "gastro")
@@ -43,6 +45,8 @@ pub struct Bundle {
     pub agents: Vec<SkillFile>,
     /// Commands in this bundle
     pub commands: Vec<SkillFile>,
+    /// Rules in this bundle
+    pub rules: Vec<SkillFile>,
 }
 
 impl Bundle {
@@ -57,6 +61,7 @@ impl Bundle {
         let skills = Self::scan_type(&path, SkillType::Skill)?;
         let agents = Self::scan_type(&path, SkillType::Agent)?;
         let commands = Self::scan_type(&path, SkillType::Command)?;
+        let rules = Self::scan_type(&path, SkillType::Rule)?;
 
         Ok(Bundle {
             name,
@@ -64,6 +69,7 @@ impl Bundle {
             skills,
             agents,
             commands,
+            rules,
         })
     }
 
@@ -108,12 +114,16 @@ impl Bundle {
             SkillType::Skill => &self.skills,
             SkillType::Agent => &self.agents,
             SkillType::Command => &self.commands,
+            SkillType::Rule => &self.rules,
         }
     }
 
     /// Check if bundle is empty (no files)
     pub fn is_empty(&self) -> bool {
-        self.skills.is_empty() && self.agents.is_empty() && self.commands.is_empty()
+        self.skills.is_empty()
+            && self.agents.is_empty()
+            && self.commands.is_empty()
+            && self.rules.is_empty()
     }
 }
 
@@ -126,5 +136,6 @@ mod tests {
         assert_eq!(SkillType::Skill.dir_name(), "skills");
         assert_eq!(SkillType::Agent.dir_name(), "agents");
         assert_eq!(SkillType::Command.dir_name(), "commands");
+        assert_eq!(SkillType::Rule.dir_name(), "rules");
     }
 }

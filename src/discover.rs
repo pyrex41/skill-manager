@@ -49,6 +49,7 @@ pub enum SkillType {
     Skill,
     Agent,
     Command,
+    Rule,
 }
 
 impl SkillType {
@@ -57,6 +58,7 @@ impl SkillType {
             SkillType::Skill => "skills",
             SkillType::Agent => "agents",
             SkillType::Command => "commands",
+            SkillType::Rule => "rules",
         }
     }
 }
@@ -103,15 +105,13 @@ fn discover_claude(base: &Path) -> Result<Vec<InstalledSkill>> {
                 .to_string();
 
             // Try to detect bundle from path: .claude/commands/bundle/skill.md
-            let bundle = path
-                .parent()
-                .and_then(|p| {
-                    if p != commands_dir {
-                        p.file_name().and_then(|n| n.to_str()).map(String::from)
-                    } else {
-                        None
-                    }
-                });
+            let bundle = path.parent().and_then(|p| {
+                if p != commands_dir {
+                    p.file_name().and_then(|n| n.to_str()).map(String::from)
+                } else {
+                    None
+                }
+            });
 
             if !name.is_empty() {
                 skills.push(InstalledSkill {
@@ -141,15 +141,13 @@ fn discover_claude(base: &Path) -> Result<Vec<InstalledSkill>> {
                 .unwrap_or("")
                 .to_string();
 
-            let bundle = path
-                .parent()
-                .and_then(|p| {
-                    if p != agents_dir {
-                        p.file_name().and_then(|n| n.to_str()).map(String::from)
-                    } else {
-                        None
-                    }
-                });
+            let bundle = path.parent().and_then(|p| {
+                if p != agents_dir {
+                    p.file_name().and_then(|n| n.to_str()).map(String::from)
+                } else {
+                    None
+                }
+            });
 
             if !name.is_empty() {
                 skills.push(InstalledSkill {
@@ -297,27 +295,30 @@ fn discover_cursor(base: &Path) -> Result<Vec<InstalledSkill>> {
         }
     }
 
-    // .cursor/rules/*.mdc -> rules (treated as commands)
+    // .cursor/rules/*/RULE.md -> rules (folder-based)
     let rules_dir = cursor_dir.join("rules");
     if rules_dir.exists() {
         for entry in std::fs::read_dir(&rules_dir)? {
             let entry = entry?;
             let path = entry.path();
-            if path.is_file() && path.extension().map(|e| e == "mdc").unwrap_or(false) {
-                let name = path
-                    .file_stem()
-                    .and_then(|s| s.to_str())
-                    .unwrap_or("")
-                    .to_string();
+            if path.is_dir() {
+                let rule_file = path.join("RULE.md");
+                if rule_file.exists() {
+                    let name = path
+                        .file_name()
+                        .and_then(|s| s.to_str())
+                        .unwrap_or("")
+                        .to_string();
 
-                if !name.is_empty() {
-                    skills.push(InstalledSkill {
-                        name,
-                        skill_type: SkillType::Command,
-                        tool: InstalledTool::Cursor,
-                        path,
-                        bundle: None,
-                    });
+                    if !name.is_empty() {
+                        skills.push(InstalledSkill {
+                            name: name.clone(),
+                            skill_type: SkillType::Rule,
+                            tool: InstalledTool::Cursor,
+                            path: rule_file,
+                            bundle: Some(name),
+                        });
+                    }
                 }
             }
         }
@@ -327,8 +328,11 @@ fn discover_cursor(base: &Path) -> Result<Vec<InstalledSkill>> {
 }
 
 /// Group skills by tool, then by type
-pub fn group_by_tool(skills: &[InstalledSkill]) -> HashMap<InstalledTool, HashMap<SkillType, Vec<&InstalledSkill>>> {
-    let mut result: HashMap<InstalledTool, HashMap<SkillType, Vec<&InstalledSkill>>> = HashMap::new();
+pub fn group_by_tool(
+    skills: &[InstalledSkill],
+) -> HashMap<InstalledTool, HashMap<SkillType, Vec<&InstalledSkill>>> {
+    let mut result: HashMap<InstalledTool, HashMap<SkillType, Vec<&InstalledSkill>>> =
+        HashMap::new();
 
     for skill in skills {
         result
@@ -367,10 +371,7 @@ pub fn group_same_skills(skills: &[InstalledSkill]) -> HashMap<String, Vec<&Inst
     let mut result: HashMap<String, Vec<&InstalledSkill>> = HashMap::new();
 
     for skill in skills {
-        result
-            .entry(skill.unique_id())
-            .or_default()
-            .push(skill);
+        result.entry(skill.unique_id()).or_default().push(skill);
     }
 
     result
@@ -378,8 +379,8 @@ pub fn group_same_skills(skills: &[InstalledSkill]) -> HashMap<String, Vec<&Inst
 
 /// Remove a skill file and clean up empty parent directories
 pub fn remove_skill(skill: &InstalledSkill) -> Result<()> {
-    // For skills that are directories (OpenCode/Cursor skills), remove the whole directory
-    if skill.skill_type == SkillType::Skill {
+    // For skills/rules that are directories (OpenCode/Cursor skills/rules), remove the whole directory
+    if skill.skill_type == SkillType::Skill || skill.skill_type == SkillType::Rule {
         if let Some(parent) = skill.path.parent() {
             if parent.is_dir() {
                 std::fs::remove_dir_all(parent)?;
@@ -477,15 +478,15 @@ mod tests {
     fn test_discover_cursor_rules() {
         let dir = tempdir().unwrap();
 
-        // Create .cursor/rules/test.mdc
-        let rules_dir = dir.path().join(".cursor/rules");
-        fs::create_dir_all(&rules_dir).unwrap();
-        fs::write(rules_dir.join("test.mdc"), "# Test rule").unwrap();
+        // Create .cursor/rules/test/RULE.md (folder-based)
+        let rule_dir = dir.path().join(".cursor/rules/test");
+        fs::create_dir_all(&rule_dir).unwrap();
+        fs::write(rule_dir.join("RULE.md"), "# Test rule").unwrap();
 
         let skills = discover_installed(dir.path()).unwrap();
         assert_eq!(skills.len(), 1);
         assert_eq!(skills[0].name, "test");
-        assert_eq!(skills[0].skill_type, SkillType::Command);
+        assert_eq!(skills[0].skill_type, SkillType::Rule);
         assert_eq!(skills[0].tool, InstalledTool::Cursor);
     }
 

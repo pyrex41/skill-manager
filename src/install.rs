@@ -15,28 +15,26 @@ pub fn install_bundle(
     types: &[SkillType],
 ) -> Result<()> {
     // Find the bundle in configured sources
-    let (_source, bundle) = config
-        .find_bundle(bundle_name)?
-        .ok_or_else(|| {
-            // Collect available bundle names for the error message
-            let mut available = vec![];
-            for src in config.sources() {
-                if let Ok(bundles) = src.list_bundles() {
-                    for b in bundles {
-                        available.push(b.name);
-                    }
+    let (_source, bundle) = config.find_bundle(bundle_name)?.ok_or_else(|| {
+        // Collect available bundle names for the error message
+        let mut available = vec![];
+        for src in config.sources() {
+            if let Ok(bundles) = src.list_bundles() {
+                for b in bundles {
+                    available.push(b.name);
                 }
             }
-            anyhow::anyhow!(
-                "Bundle not found: {}\nAvailable: {}",
-                bundle_name,
-                if available.is_empty() {
-                    "(none)".to_string()
-                } else {
-                    available.join(", ")
-                }
-            )
-        })?;
+        }
+        anyhow::anyhow!(
+            "Bundle not found: {}\nAvailable: {}",
+            bundle_name,
+            if available.is_empty() {
+                "(none)".to_string()
+            } else {
+                available.join(", ")
+            }
+        )
+    })?;
 
     println!(
         "Importing from {} to {}...",
@@ -178,17 +176,17 @@ mod tests {
 
         let bundle = crate::bundle::Bundle::from_path(source_path.join("test-bundle")).unwrap();
 
-        // Test agent (should go to rules with .mdc extension)
+        // Test agent (should go to rules folder-based structure)
         for agent in &bundle.agents {
             Tool::Cursor
                 .write_file(&target_dir.path().to_path_buf(), "test-bundle", agent)
                 .unwrap();
         }
 
-        // Verify rules structure with .mdc extension
+        // Verify rules folder-based structure
         assert!(target_dir
             .path()
-            .join(".cursor/rules/test-bundle-analyzer.mdc")
+            .join(".cursor/rules/test-bundle-analyzer/RULE.md")
             .exists());
     }
 }

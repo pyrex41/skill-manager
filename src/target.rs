@@ -61,11 +61,9 @@ impl Tool {
                 SkillType::Skill => format!(".opencode/skill/{}-*/", bundle_name),
                 SkillType::Agent => ".opencode/agent/".to_string(),
                 SkillType::Command => ".opencode/command/".to_string(),
+                SkillType::Rule => format!(".opencode/rule/{}-*/", bundle_name),
             },
-            Tool::Cursor => match skill_type {
-                SkillType::Skill => format!(".cursor/skills/{}-*/", bundle_name),
-                _ => ".cursor/rules/".to_string(),
-            },
+            Tool::Cursor => format!(".cursor/rules/{}-*/", bundle_name),
         }
     }
 
@@ -111,6 +109,15 @@ impl Tool {
 
                 Ok(dest_file)
             }
+            SkillType::Rule => {
+                let dest_dir = target_dir.join(".opencode/rule").join(&combined_name);
+                fs::create_dir_all(&dest_dir)?;
+
+                let dest_file = dest_dir.join("RULE.md");
+                transform_skill_file(&skill.path, &dest_file, &combined_name)?;
+
+                Ok(dest_file)
+            }
             SkillType::Agent => {
                 let dest_dir = target_dir.join(".opencode/agent");
                 fs::create_dir_all(&dest_dir)?;
@@ -133,8 +140,7 @@ impl Tool {
     }
 
     // Cursor:
-    //   skills -> .cursor/skills/{bundle}-{name}/SKILL.md (with frontmatter)
-    //   agents/commands -> .cursor/rules/{bundle}-{name}.mdc
+    //   All types -> .cursor/rules/{bundle}-{name}/RULE.md (folder-based)
     fn write_cursor(
         &self,
         target_dir: &PathBuf,
@@ -143,27 +149,14 @@ impl Tool {
     ) -> Result<PathBuf> {
         let combined_name = format!("{}-{}", bundle_name, skill.name);
 
-        match skill.skill_type {
-            SkillType::Skill => {
-                let dest_dir = target_dir.join(".cursor/skills").join(&combined_name);
-                fs::create_dir_all(&dest_dir)?;
+        // All Cursor types now use folder-based rules
+        let dest_dir = target_dir.join(".cursor/rules").join(&combined_name);
+        fs::create_dir_all(&dest_dir)?;
 
-                let dest_file = dest_dir.join("SKILL.md");
-                transform_skill_file(&skill.path, &dest_file, &combined_name)?;
+        let dest_file = dest_dir.join("RULE.md");
+        transform_skill_file(&skill.path, &dest_file, &combined_name)?;
 
-                Ok(dest_file)
-            }
-            _ => {
-                let dest_dir = target_dir.join(".cursor/rules");
-                fs::create_dir_all(&dest_dir)?;
-
-                // Note: .mdc extension for Cursor rules
-                let dest_file = dest_dir.join(format!("{}.mdc", combined_name));
-                fs::copy(&skill.path, &dest_file)?;
-
-                Ok(dest_file)
-            }
-        }
+        Ok(dest_file)
     }
 }
 

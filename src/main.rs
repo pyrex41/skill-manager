@@ -258,7 +258,7 @@ fn main() -> Result<()> {
 
 fn browse_bundles(config: &Config) -> Result<()> {
     use crate::bundle::Bundle;
-    use dialoguer::{theme::ColorfulTheme, Select};
+    use dialoguer::{theme::ColorfulTheme, FuzzySelect};
 
     let sources = config.sources();
 
@@ -296,42 +296,53 @@ fn browse_bundles(config: &Config) -> Result<()> {
 
     loop {
         println!();
-        println!("{}", "Available Bundles".bold());
+        println!("{}", "Available Bundles (type to search)".bold());
         println!();
 
+        // Build display items with searchable content
+        // Format: "name | author | counts | source"
         let items: Vec<String> = all_bundles
             .iter()
             .map(|(source, bundle)| {
+                let author = bundle
+                    .meta
+                    .author
+                    .as_ref()
+                    .map(|a| format!("by {}", a))
+                    .unwrap_or_default();
                 let counts = format!(
                     "{}s {}a {}c",
                     bundle.skills.len(),
                     bundle.agents.len(),
                     bundle.commands.len()
                 );
+                // Include searchable content (name, author, skill names)
+                let search_hint = bundle.search_string();
                 format!(
-                    "{:<20} {} {}",
+                    "{:<20} {:<15} {} {} [{}]",
                     bundle.name,
+                    author.dimmed(),
                     counts.dimmed(),
-                    format!("({})", source).dimmed()
+                    format!("({})", source).dimmed(),
+                    search_hint.dimmed()
                 )
             })
             .collect();
 
-        let mut options = items.clone();
-        options.push("← Back".to_string());
-
-        let sel = Select::with_theme(&ColorfulTheme::default())
-            .with_prompt("Select a bundle to explore")
-            .items(&options)
+        let sel = FuzzySelect::with_theme(&ColorfulTheme::default())
+            .with_prompt("Select a bundle (type to filter, Esc to quit)")
+            .items(&items)
             .default(0)
-            .interact()?;
+            .highlight_matches(true)
+            .interact_opt()?;
 
-        if sel >= all_bundles.len() {
-            break;
+        match sel {
+            Some(idx) if idx < all_bundles.len() => {
+                let (_, bundle) = &all_bundles[idx];
+                show_bundle_details(bundle)?;
+            }
+            _ => break,
         }
-
-        let (_, bundle) = &all_bundles[sel];
-        show_bundle_details(bundle)?;
     }
 
     Ok(())

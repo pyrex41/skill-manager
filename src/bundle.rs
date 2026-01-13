@@ -30,12 +30,19 @@ impl SkillType {
 }
 
 /// Metadata from meta.yaml files (resources format)
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Default, Clone)]
 pub struct ResourceMeta {
-    pub name: String,
-    #[allow(dead_code)]
+    pub name: Option<String>,
     pub author: Option<String>,
-    #[allow(dead_code)]
+    pub description: Option<String>,
+}
+
+/// Metadata for a bundle (author, description, etc.)
+#[derive(Debug, Clone, Default)]
+pub struct BundleMeta {
+    /// Author name or GitHub username
+    pub author: Option<String>,
+    /// Description of the bundle
     pub description: Option<String>,
 }
 
@@ -66,6 +73,29 @@ pub struct Bundle {
     pub commands: Vec<SkillFile>,
     /// Rules in this bundle
     pub rules: Vec<SkillFile>,
+    /// Metadata (author, description)
+    pub meta: BundleMeta,
+}
+
+impl Bundle {
+    /// Create a searchable string for fuzzy matching
+    pub fn search_string(&self) -> String {
+        let mut parts = vec![self.name.clone()];
+        if let Some(author) = &self.meta.author {
+            parts.push(author.clone());
+        }
+        if let Some(desc) = &self.meta.description {
+            parts.push(desc.clone());
+        }
+        // Add skill/command names for searching
+        for skill in &self.skills {
+            parts.push(skill.name.clone());
+        }
+        for cmd in &self.commands {
+            parts.push(cmd.name.clone());
+        }
+        parts.join(" ")
+    }
 }
 
 impl Bundle {
@@ -89,6 +119,7 @@ impl Bundle {
             agents,
             commands,
             rules,
+            meta: BundleMeta::default(),
         })
     }
 
@@ -139,20 +170,27 @@ impl Bundle {
                     }
 
                     // Get or create bundle for this resource
-                    if let Some(skill_file) =
-                        Self::scan_resource_folder(&resource_dir, skill_type, folder_name)?
-                    {
+                    if let Some((skill_file, resource_meta)) = Self::scan_resource_folder_with_meta(
+                        &resource_dir,
+                        skill_type,
+                        folder_name,
+                    )? {
                         let bundle_name = skill_file.name.clone();
-                        let bundle = bundles
-                            .entry(bundle_name.clone())
-                            .or_insert_with(|| Bundle {
+                        let bundle = bundles.entry(bundle_name.clone()).or_insert_with(|| {
+                            let meta = BundleMeta {
+                                author: resource_meta.author.clone(),
+                                description: resource_meta.description.clone(),
+                            };
+                            Bundle {
                                 name: bundle_name,
                                 path: resource_dir.clone(),
                                 skills: vec![],
                                 agents: vec![],
                                 commands: vec![],
                                 rules: vec![],
-                            });
+                                meta,
+                            }
+                        });
 
                         match skill_type {
                             SkillType::Skill => bundle.skills.push(skill_file),
@@ -226,9 +264,17 @@ impl Bundle {
                 continue;
             }
 
-            // Extract name from YAML frontmatter if present, otherwise use folder name
-            let name = Self::extract_frontmatter_name(&skill_md)
+            // Extract metadata from YAML frontmatter if present
+            let frontmatter = Self::extract_frontmatter(&skill_md);
+            let name = frontmatter
+                .as_ref()
+                .and_then(|fm| fm.name.clone())
                 .unwrap_or_else(|| folder_name.to_string());
+
+            let meta = BundleMeta {
+                author: frontmatter.as_ref().and_then(|fm| fm.author.clone()),
+                description: frontmatter.as_ref().and_then(|fm| fm.description.clone()),
+            };
 
             let skill_file = SkillFile {
                 name: name.clone(),
@@ -243,6 +289,7 @@ impl Bundle {
                 agents: vec![],
                 commands: vec![],
                 rules: vec![],
+                meta,
             });
         }
 
@@ -250,8 +297,8 @@ impl Bundle {
         Ok(bundles)
     }
 
-    /// Extract the 'name' field from YAML frontmatter in a markdown file
-    fn extract_frontmatter_name(path: &PathBuf) -> Option<String> {
+    /// Extract full metadata from YAML frontmatter in a markdown file
+    fn extract_frontmatter(path: &PathBuf) -> Option<ResourceMeta> {
         let content = std::fs::read_to_string(path).ok()?;
         if !content.starts_with("---") {
             return None;
@@ -262,14 +309,17 @@ impl Bundle {
         let end_idx = rest.find("---")?;
         let frontmatter = &rest[..end_idx];
 
-        // Parse as YAML and extract name
-        #[derive(serde::Deserialize)]
-        struct Frontmatter {
-            name: Option<String>,
-        }
+        serde_yaml::from_str(frontmatter).ok()
+    }
 
-        let fm: Frontmatter = serde_yaml::from_str(frontmatter).ok()?;
-        fm.name
+    /// Load metadata from meta.yaml file
+    fn load_meta_yaml(dir: &PathBuf) -> Option<ResourceMeta> {
+        let meta_path = dir.join("meta.yaml");
+        if !meta_path.exists() {
+            return None;
+        }
+        let content = std::fs::read_to_string(&meta_path).ok()?;
+        serde_yaml::from_str(&content).ok()
     }
 
     /// Scan a subdirectory for .md files (original flat format)
@@ -308,24 +358,15 @@ impl Bundle {
     }
 
     /// Scan a single resource folder for meta.yaml and content .md file
-    fn scan_resource_folder(
+    /// Returns both the skill file and the metadata
+    fn scan_resource_folder_with_meta(
         resource_dir: &PathBuf,
         skill_type: SkillType,
         folder_name: &str,
-    ) -> anyhow::Result<Option<SkillFile>> {
-        // Try to read meta.yaml to get the name
-        let meta_path = resource_dir.join("meta.yaml");
-        let name = if meta_path.exists() {
-            match std::fs::read_to_string(&meta_path) {
-                Ok(content) => match serde_yaml::from_str::<ResourceMeta>(&content) {
-                    Ok(meta) => meta.name,
-                    Err(_) => folder_name.to_string(),
-                },
-                Err(_) => folder_name.to_string(),
-            }
-        } else {
-            folder_name.to_string()
-        };
+    ) -> anyhow::Result<Option<(SkillFile, ResourceMeta)>> {
+        // Try to read meta.yaml to get metadata
+        let meta = Self::load_meta_yaml(resource_dir).unwrap_or_default();
+        let name = meta.name.clone().unwrap_or_else(|| folder_name.to_string());
 
         // Find the content .md file (could be skill.md, command.md, agent.md, rule.md, or any .md)
         let expected_names = match skill_type {
@@ -339,11 +380,14 @@ impl Bundle {
         for expected in &expected_names {
             let md_path = resource_dir.join(expected);
             if md_path.exists() {
-                return Ok(Some(SkillFile {
-                    name,
-                    path: md_path,
-                    skill_type,
-                }));
+                return Ok(Some((
+                    SkillFile {
+                        name,
+                        path: md_path,
+                        skill_type,
+                    },
+                    meta,
+                )));
             }
         }
 
@@ -353,11 +397,14 @@ impl Bundle {
             let path = entry.path();
 
             if path.is_file() && path.extension().is_some_and(|e| e == "md") {
-                return Ok(Some(SkillFile {
-                    name,
-                    path,
-                    skill_type,
-                }));
+                return Ok(Some((
+                    SkillFile {
+                        name,
+                        path,
+                        skill_type,
+                    },
+                    meta,
+                )));
             }
         }
 
@@ -622,20 +669,24 @@ mod tests {
         // With frontmatter
         fs::write(
             &file,
-            "---\nname: My Skill\ndescription: test\n---\n\n# Content",
+            "---\nname: My Skill\ndescription: test\nauthor: Test Author\n---\n\n# Content",
         )
         .unwrap();
-        assert_eq!(
-            Bundle::extract_frontmatter_name(&file),
-            Some("My Skill".to_string())
-        );
+        let meta = Bundle::extract_frontmatter(&file);
+        assert!(meta.is_some());
+        let meta = meta.unwrap();
+        assert_eq!(meta.name, Some("My Skill".to_string()));
+        assert_eq!(meta.author, Some("Test Author".to_string()));
+        assert_eq!(meta.description, Some("test".to_string()));
 
         // Without frontmatter
         fs::write(&file, "# No Frontmatter").unwrap();
-        assert_eq!(Bundle::extract_frontmatter_name(&file), None);
+        assert!(Bundle::extract_frontmatter(&file).is_none());
 
         // With frontmatter but no name field
         fs::write(&file, "---\ndescription: test\n---\n\n# Content").unwrap();
-        assert_eq!(Bundle::extract_frontmatter_name(&file), None);
+        let meta = Bundle::extract_frontmatter(&file);
+        assert!(meta.is_some());
+        assert_eq!(meta.unwrap().name, None);
     }
 }

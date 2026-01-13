@@ -22,7 +22,7 @@ thiserror = "1"
 directories = "5"
 toml = "0.8"
 serde = { version = "1", features = ["derive"] }
-dialoguer = "0.11"
+dialoguer = { version = "0.11", features = ["fuzzy-select"] }
 colored = "2"
 git2 = "0.19"
 serde_yaml = "0.9"

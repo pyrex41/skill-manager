@@ -36,6 +36,12 @@ impl Source for LocalSource {
             return Bundle::list_from_resources_path(self.path.clone());
         }
 
+        // Check if this is an Anthropic-format source (skills/{name}/SKILL.md at root)
+        // Each skill folder becomes its own bundle
+        if Bundle::is_anthropic_format(&self.path) {
+            return Bundle::list_from_anthropic_path(self.path.clone());
+        }
+
         let mut bundles = vec![];
 
         for entry in std::fs::read_dir(&self.path)? {

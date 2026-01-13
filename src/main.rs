@@ -113,7 +113,7 @@ enum Commands {
         #[arg(long)]
         to_rule: bool,
         /// Output file (default: stdout)
-        #[arg(short, long)]
+        #[arg(long)]
         output: Option<PathBuf>,
     },
 }

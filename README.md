@@ -102,9 +102,13 @@ skm here --clean --yes  # Remove all without confirmation
 ### `skm update`
 Pull latest changes from all git sources.
 
-## Creating Skill Bundles
+## Supported Skill Formats
 
-A bundle is a directory with one or more of these subdirectories:
+skm supports multiple skill repository formats, making it compatible with popular community skill repos.
+
+### Flat Bundle Format
+
+The original format - a directory with subdirectories for each type:
 
 ```
 my-bundle/
@@ -112,21 +116,65 @@ my-bundle/
 │   └── helper.md
 ├── agents/          # Agent definitions
 │   └── reviewer.md
-└── commands/        # Slash commands (e.g., /commit)
-    └── commit.md
+├── commands/        # Slash commands (e.g., /commit)
+│   └── commit.md
+└── rules/           # Rules/guidelines
+    └── style.md
 ```
 
-Each `.md` file becomes an installable skill. The file content is tool-specific - typically markdown with instructions for the AI.
+### Anthropic/Marketplace Format
+
+Compatible with [anthropics/skills](https://github.com/anthropics/skills) and [huggingface/skills](https://github.com/huggingface/skills):
+
+```
+skills/
+├── xlsx/
+│   └── SKILL.md     # With YAML frontmatter (name, description)
+├── pdf/
+│   └── SKILL.md
+└── docx/
+    └── SKILL.md
+```
+
+Each skill folder becomes a separate installable bundle. The skill name is extracted from YAML frontmatter if present.
+
+```bash
+# Add the official Anthropic skills repo
+skm sources add https://github.com/anthropics/skills
+
+# Install individual skills
+skm xlsx
+skm pdf
+```
+
+### Community Resources Format
+
+For community repos with `resources/` directory structure:
+
+```
+resources/
+├── skills/
+│   └── my-skill/
+│       ├── meta.yaml    # name, author, description
+│       └── skill.md
+└── commands/
+    └── my-command/
+        ├── meta.yaml
+        └── command.md
+```
+
+Each resource folder becomes a separate bundle, named from `meta.yaml`.
 
 ### Where Files Get Installed
 
 | Source | Claude | OpenCode | Cursor |
 |--------|--------|----------|--------|
 | `skills/foo.md` | `.claude/skills/bundle/foo.md` | `.opencode/skill/bundle-foo/SKILL.md` | `.cursor/skills/bundle-foo/SKILL.md` |
-| `agents/foo.md` | `.claude/agents/bundle/foo.md` | `.opencode/agent/bundle-foo.md` | `.cursor/rules/bundle-foo.mdc` |
-| `commands/foo.md` | `.claude/commands/bundle/foo.md` | `.opencode/command/bundle-foo.md` | `.cursor/rules/bundle-foo.mdc` |
+| `agents/foo.md` | `.claude/agents/bundle/foo.md` | `.opencode/agent/bundle-foo.md` | `.cursor/rules/bundle-foo/RULE.md` |
+| `commands/foo.md` | `.claude/commands/bundle/foo.md` | `.opencode/command/bundle-foo.md` | `.cursor/rules/bundle-foo/RULE.md` |
+| `rules/foo.md` | `.claude/rules/bundle/foo.md` | `.opencode/rule/bundle-foo/RULE.md` | `.cursor/rules/bundle-foo/RULE.md` |
 
-OpenCode and Cursor skills require YAML frontmatter with a `name` field - skm adds this automatically if missing.
+OpenCode and Cursor skills/rules require YAML frontmatter with a `name` field - skm adds this automatically if missing.
 
 ## Configuration
 

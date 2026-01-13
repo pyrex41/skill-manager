@@ -1,0 +1,217 @@
+name: Validate Skills
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, labeled, unlabeled]
+
+jobs:
+  validate:
+    # Skip if 'skip-validation' label is present
+    if: ${{ !contains(github.event.pull_request.labels.*.name, 'skip-validation') }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Detect and validate skill format
+        run: |
+          #!/bin/bash
+          set -e
+          
+          ERRORS=0
+          WARNINGS=0
+          FORMAT=""
+          
+          error() { echo "::error::$1"; ((ERRORS++)); }
+          warn() { echo "::warning::$1"; ((WARNINGS++)); }
+          info() { echo "$1"; }
+          
+          echo "========================================"
+          echo "  Skill Repository Validator"
+          echo "========================================"
+          echo ""
+          
+          # Detect format
+          if [ -d "resources" ]; then
+            FORMAT="resources"
+            info "Detected format: Resources (resources/{type}/name/)"
+          elif [ -d "skills" ] && find skills -name "SKILL.md" -type f | head -1 | grep -q .; then
+            FORMAT="anthropic"
+            info "Detected format: Anthropic (skills/{name}/SKILL.md)"
+          elif [ -d "skills" ] || [ -d "commands" ] || [ -d "agents" ] || [ -d "rules" ]; then
+            FORMAT="flat"
+            info "Detected format: Flat ({skills,commands,agents,rules}/*.md)"
+          else
+            error "No recognized skill format found"
+            error "Expected one of:"
+            error "  - resources/{skills,commands,agents,rules}/name/{meta.yaml,*.md}"
+            error "  - skills/{name}/SKILL.md"
+            error "  - {skills,commands,agents,rules}/*.md"
+            exit 1
+          fi
+          
+          echo ""
+          
+          # Validate based on format
+          case "$FORMAT" in
+            resources)
+              VALID_TYPES="skills commands agents cursor-rules rules"
+              
+              for type_dir in resources/*/; do
+                [ -d "$type_dir" ] || continue
+                type_name=$(basename "$type_dir")
+                
+                if ! echo "$VALID_TYPES" | grep -qw "$type_name"; then
+                  error "Invalid resource type: $type_name (valid: $VALID_TYPES)"
+                  continue
+                fi
+                
+                for resource_dir in "$type_dir"*/; do
+                  [ -d "$resource_dir" ] || continue
+                  resource_name=$(basename "$resource_dir")
+                  
+                  # Skip templates
+                  [[ "$resource_name" == _* ]] && continue
+                  [[ "$resource_name" == .* ]] && continue
+                  
+                  info "Checking: $type_name/$resource_name"
+                  
+                  # Require meta.yaml
+                  if [ ! -f "$resource_dir/meta.yaml" ]; then
+                    error "$type_name/$resource_name: Missing meta.yaml"
+                  else
+                    if ! grep -q "^name:" "$resource_dir/meta.yaml"; then
+                      error "$type_name/$resource_name: meta.yaml missing 'name' field"
+                    fi
+                    if ! grep -q "^author:" "$resource_dir/meta.yaml"; then
+                      error "$type_name/$resource_name: meta.yaml missing 'author' field"
+                    fi
+                    if ! grep -q "^description:" "$resource_dir/meta.yaml"; then
+                      warn "$type_name/$resource_name: meta.yaml missing 'description' field"
+                    fi
+                  fi
+                  
+                  # Require at least one .md file
+                  if ! find "$resource_dir" -maxdepth 1 -name "*.md" -type f | grep -q .; then
+                    error "$type_name/$resource_name: No .md content file found"
+                  fi
+                  
+                  # Warn on naming convention
+                  if [[ ! "$resource_name" =~ ^[a-z0-9]+(-[a-z0-9]+)*$ ]]; then
+                    warn "$type_name/$resource_name: Name should be kebab-case"
+                  fi
+                done
+              done
+              ;;
+              
+            anthropic)
+              for skill_dir in skills/*/; do
+                [ -d "$skill_dir" ] || continue
+                skill_name=$(basename "$skill_dir")
+                
+                # Skip templates
+                [[ "$skill_name" == _* ]] && continue
+                [[ "$skill_name" == .* ]] && continue
+                
+                info "Checking: skills/$skill_name"
+                
+                # Require SKILL.md
+                if [ ! -f "$skill_dir/SKILL.md" ]; then
+                  error "skills/$skill_name: Missing SKILL.md"
+                else
+                  # Check for frontmatter (recommended but not required)
+                  if ! head -1 "$skill_dir/SKILL.md" | grep -q "^---"; then
+                    warn "skills/$skill_name: SKILL.md missing YAML frontmatter"
+                  elif ! grep -q "^name:" "$skill_dir/SKILL.md"; then
+                    warn "skills/$skill_name: SKILL.md frontmatter missing 'name' field"
+                  fi
+                fi
+                
+                # Warn on naming convention
+                if [[ ! "$skill_name" =~ ^[a-z0-9]+(-[a-z0-9]+)*$ ]]; then
+                  warn "skills/$skill_name: Name should be kebab-case"
+                fi
+              done
+              ;;
+              
+            flat)
+              for type_dir in skills commands agents rules; do
+                [ -d "$type_dir" ] || continue
+                
+                for md_file in "$type_dir"/*.md; do
+                  [ -f "$md_file" ] || continue
+                  filename=$(basename "$md_file")
+                  
+                  info "Checking: $type_dir/$filename"
+                  
+                  # Check file is not empty
+                  if [ ! -s "$md_file" ]; then
+                    error "$type_dir/$filename: File is empty"
+                  fi
+                  
+                  # Warn on naming convention
+                  name="${filename%.md}"
+                  if [[ ! "$name" =~ ^[a-z0-9]+(-[a-z0-9]+)*$ ]]; then
+                    warn "$type_dir/$filename: Name should be kebab-case"
+                  fi
+                done
+              done
+              ;;
+          esac
+          
+          echo ""
+          echo "========================================"
+          echo "  Summary"
+          echo "========================================"
+          echo "  Format:   $FORMAT"
+          echo "  Errors:   $ERRORS"
+          echo "  Warnings: $WARNINGS"
+          echo ""
+          
+          if [ "$ERRORS" -gt 0 ]; then
+            echo "::error::Validation failed with $ERRORS error(s)"
+            exit 1
+          elif [ "$WARNINGS" -gt 0 ]; then
+            echo "Validation passed with warnings"
+          else
+            echo "Validation passed"
+          fi
+
+      - name: Check for naming conflicts
+        run: |
+          #!/bin/bash
+          set -e
+          
+          echo "Checking for naming conflicts..."
+          
+          # Collect all skill names across all formats
+          NAMES_FILE=$(mktemp)
+          
+          # Resources format
+          if [ -d "resources" ]; then
+            for type_dir in resources/*/; do
+              [ -d "$type_dir" ] || continue
+              find "$type_dir" -mindepth 1 -maxdepth 1 -type d \
+                ! -name "_*" ! -name ".*" -exec basename {} \; >> "$NAMES_FILE"
+            done
+          fi
+          
+          # Anthropic format
+          if [ -d "skills" ]; then
+            find skills -mindepth 1 -maxdepth 1 -type d \
+              ! -name "_*" ! -name ".*" -exec basename {} \; >> "$NAMES_FILE"
+          fi
+          
+          # Check for case-insensitive duplicates
+          DUPES=$(cat "$NAMES_FILE" | tr '[:upper:]' '[:lower:]' | sort | uniq -d)
+          
+          if [ -n "$DUPES" ]; then
+            echo "::error::Naming conflicts found:"
+            echo "$DUPES" | while read -r dupe; do
+              echo "  - $dupe"
+            done
+            rm "$NAMES_FILE"
+            exit 1
+          fi
+          
+          rm "$NAMES_FILE"
+          echo "No naming conflicts found"

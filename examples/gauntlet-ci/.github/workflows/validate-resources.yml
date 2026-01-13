@@ -1,0 +1,151 @@
+name: Validate Resources
+
+on:
+  pull_request:
+    paths:
+      - 'resources/**'
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Validate resource structure
+        run: |
+          #!/bin/bash
+          set -e
+          
+          ERRORS=0
+          WARNINGS=0
+          
+          echo "🔍 Validating resource structure..."
+          echo ""
+          
+          # Valid resource types
+          VALID_TYPES="skills commands agents cursor-rules rules"
+          
+          # Check each resource type directory
+          for type_dir in resources/*/; do
+            type_name=$(basename "$type_dir")
+            
+            # Validate type directory name
+            if ! echo "$VALID_TYPES" | grep -qw "$type_name"; then
+              echo "❌ ERROR: Invalid resource type directory: $type_name"
+              echo "   Valid types: $VALID_TYPES"
+              ((ERRORS++))
+              continue
+            fi
+            
+            # Check each resource in this type
+            for resource_dir in "$type_dir"*/; do
+              [ -d "$resource_dir" ] || continue
+              
+              resource_name=$(basename "$resource_dir")
+              
+              # Skip template/example directories
+              if [[ "$resource_name" == _* ]] || [[ "$resource_name" == .* ]]; then
+                echo "⏭️  Skipping template: $resource_dir"
+                continue
+              fi
+              
+              echo "📦 Checking: $type_dir$resource_name"
+              
+              # Check for meta.yaml
+              if [ ! -f "$resource_dir/meta.yaml" ]; then
+                echo "   ❌ ERROR: Missing meta.yaml"
+                ((ERRORS++))
+              else
+                # Validate meta.yaml has required fields
+                if ! grep -q "^name:" "$resource_dir/meta.yaml"; then
+                  echo "   ❌ ERROR: meta.yaml missing 'name' field"
+                  ((ERRORS++))
+                fi
+                
+                if ! grep -q "^author:" "$resource_dir/meta.yaml"; then
+                  echo "   ❌ ERROR: meta.yaml missing 'author' field"
+                  ((ERRORS++))
+                fi
+                
+                if ! grep -q "^description:" "$resource_dir/meta.yaml"; then
+                  echo "   ⚠️  WARNING: meta.yaml missing 'description' field"
+                  ((WARNINGS++))
+                fi
+              fi
+              
+              # Check for content .md file
+              MD_COUNT=$(find "$resource_dir" -maxdepth 1 -name "*.md" | wc -l)
+              if [ "$MD_COUNT" -eq 0 ]; then
+                echo "   ❌ ERROR: No .md content file found"
+                ((ERRORS++))
+              elif [ "$MD_COUNT" -gt 1 ]; then
+                echo "   ⚠️  WARNING: Multiple .md files found, using first match"
+                ((WARNINGS++))
+              fi
+              
+              # Validate naming convention (kebab-case)
+              if [[ ! "$resource_name" =~ ^[a-z0-9]+(-[a-z0-9]+)*$ ]]; then
+                echo "   ⚠️  WARNING: Resource name should be kebab-case (e.g., my-skill-name)"
+                ((WARNINGS++))
+              fi
+              
+              echo "   ✓ Structure OK"
+            done
+          done
+          
+          echo ""
+          echo "═══════════════════════════════════════"
+          echo "📊 Validation Summary"
+          echo "═══════════════════════════════════════"
+          echo "   Errors:   $ERRORS"
+          echo "   Warnings: $WARNINGS"
+          echo ""
+          
+          if [ "$ERRORS" -gt 0 ]; then
+            echo "❌ Validation FAILED"
+            exit 1
+          elif [ "$WARNINGS" -gt 0 ]; then
+            echo "⚠️  Validation PASSED with warnings"
+            exit 0
+          else
+            echo "✅ Validation PASSED"
+            exit 0
+          fi
+
+      - name: Check for naming conflicts
+        run: |
+          #!/bin/bash
+          set -e
+          
+          echo "🔍 Checking for naming conflicts..."
+          echo ""
+          
+          CONFLICTS=0
+          
+          for type_dir in resources/*/; do
+            [ -d "$type_dir" ] || continue
+            type_name=$(basename "$type_dir")
+            
+            # Get all resource names (excluding templates)
+            names=$(find "$type_dir" -mindepth 1 -maxdepth 1 -type d \
+              ! -name "_*" ! -name ".*" -printf "%f\n" | sort)
+            
+            # Check for duplicates (case-insensitive)
+            dupes=$(echo "$names" | tr '[:upper:]' '[:lower:]' | sort | uniq -d)
+            
+            if [ -n "$dupes" ]; then
+              echo "❌ Naming conflict in $type_name/:"
+              echo "$dupes" | while read -r dupe; do
+                echo "   - $dupe"
+              done
+              ((CONFLICTS++))
+            fi
+          done
+          
+          if [ "$CONFLICTS" -gt 0 ]; then
+            echo ""
+            echo "❌ Found naming conflicts!"
+            exit 1
+          else
+            echo "✅ No naming conflicts found"
+          fi

@@ -30,6 +30,12 @@ impl Source for LocalSource {
             return Ok(vec![]);
         }
 
+        // Check if this is a resources-format source (has resources/ directory at root)
+        // Each resource folder becomes its own bundle
+        if Bundle::is_resources_format(&self.path) {
+            return Bundle::list_from_resources_path(self.path.clone());
+        }
+
         let mut bundles = vec![];
 
         for entry in std::fs::read_dir(&self.path)? {
@@ -244,5 +250,38 @@ mod tests {
         let bundles = source.list_bundles().unwrap();
 
         assert!(bundles.is_empty());
+    }
+
+    #[test]
+    fn test_local_source_resources_format() {
+        let dir = tempdir().unwrap();
+
+        // Create resources-format structure with multiple resources
+        let resources = dir.path().join("resources");
+        let skills_dir = resources.join("skills");
+
+        // First skill
+        let skill1 = skills_dir.join("my-skill");
+        fs::create_dir_all(&skill1).unwrap();
+        fs::write(skill1.join("meta.yaml"), "name: My Skill\nauthor: test\n").unwrap();
+        fs::write(skill1.join("skill.md"), "# Skill content").unwrap();
+
+        // Second skill
+        let skill2 = skills_dir.join("another-skill");
+        fs::create_dir_all(&skill2).unwrap();
+        fs::write(
+            skill2.join("meta.yaml"),
+            "name: Another Skill\nauthor: test\n",
+        )
+        .unwrap();
+        fs::write(skill2.join("skill.md"), "# Another skill").unwrap();
+
+        let source = LocalSource::new(dir.path().to_path_buf());
+        let bundles = source.list_bundles().unwrap();
+
+        // Each resource folder becomes its own bundle
+        assert_eq!(bundles.len(), 2);
+        assert_eq!(bundles[0].name, "Another Skill");
+        assert_eq!(bundles[1].name, "My Skill");
     }
 }

@@ -63,7 +63,15 @@ skm here --remove
 ## Commands
 
 ### `skm list`
-Interactive browser for exploring available bundles. Navigate through sources, view bundle contents, and inspect individual skill files.
+Interactive browser with **fuzzy search** for exploring available bundles. Type to filter by bundle name, author, description, or skill names. Press Esc to quit, Enter to view bundle details.
+
+```
+Available Bundles (type to search)
+
+> xlsx                 by Anthropic    1s 0a 0c (anthropics/skills)
+  pdf                  by Anthropic    1s 0a 0c (anthropics/skills)
+  my-skill             by username     2s 1a 0c (~/.claude-skills)
+```
 
 ### `skm add <bundle>` or `skm <bundle>`
 Install a bundle to the current directory. Bundles are searched in priority order across all configured sources.

@@ -237,6 +237,7 @@ fn transform_skill_file(src: &PathBuf, dest: &PathBuf, skill_name: &str) -> Resu
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::bundle::{SkillFile, SkillType};
     use tempfile::tempdir;
 
     #[test]
@@ -286,5 +287,98 @@ mod tests {
         let result = fs::read_to_string(&dest).unwrap();
         assert!(result.contains("name: existing-name"));
         assert!(!result.contains("name: test-skill"));
+    }
+
+    #[test]
+    fn test_write_opencode_skill() {
+        let temp_dir = tempdir().unwrap();
+        let target_dir = temp_dir.path().to_path_buf();
+
+        // Create source skill file
+        let src_content = "# My Skill\n\nContent here";
+        let src_path = temp_dir.path().join("source.md");
+        fs::write(&src_path, src_content).unwrap();
+
+        let skill = SkillFile {
+            name: "my-skill".to_string(),
+            path: src_path,
+            skill_type: SkillType::Skill,
+        };
+
+        // Write to OpenCode format
+        let result = Tool::OpenCode
+            .write_file(&target_dir, "test-bundle", &skill)
+            .unwrap();
+
+        // Check the file was created with correct path and content
+        let expected_path = target_dir.join(".opencode/skill/test-bundle-my-skill/SKILL.md");
+        assert_eq!(result, expected_path);
+        assert!(expected_path.exists());
+
+        let content = fs::read_to_string(&expected_path).unwrap();
+        assert!(content.starts_with("---\nname: test-bundle-my-skill\n---\n"));
+        assert!(content.contains("# My Skill"));
+    }
+
+    #[test]
+    fn test_write_cursor_skill() {
+        let temp_dir = tempdir().unwrap();
+        let target_dir = temp_dir.path().to_path_buf();
+
+        // Create source skill file
+        let src_content = "# My Skill\n\nContent here";
+        let src_path = temp_dir.path().join("source.md");
+        fs::write(&src_path, src_content).unwrap();
+
+        let skill = SkillFile {
+            name: "my-skill".to_string(),
+            path: src_path,
+            skill_type: SkillType::Skill,
+        };
+
+        // Write to Cursor format
+        let result = Tool::Cursor
+            .write_file(&target_dir, "test-bundle", &skill)
+            .unwrap();
+
+        // Check the file was created with correct path and content
+        let expected_path = target_dir.join(".cursor/skills/test-bundle-my-skill/SKILL.md");
+        assert_eq!(result, expected_path);
+        assert!(expected_path.exists());
+
+        let content = fs::read_to_string(&expected_path).unwrap();
+        assert!(content.starts_with("---\nname: test-bundle-my-skill\n---\n"));
+        assert!(content.contains("# My Skill"));
+    }
+
+    #[test]
+    fn test_write_cursor_rule() {
+        let temp_dir = tempdir().unwrap();
+        let target_dir = temp_dir.path().to_path_buf();
+
+        // Create source rule file
+        let src_content = "# My Rule\n\nContent here";
+        let src_path = temp_dir.path().join("source.md");
+        fs::write(&src_path, src_content).unwrap();
+
+        let skill = SkillFile {
+            name: "my-rule".to_string(),
+            path: src_path,
+            skill_type: SkillType::Rule,
+        };
+
+        // Write to Cursor format (rules go to .cursor/rules/)
+        let result = Tool::Cursor
+            .write_file(&target_dir, "test-bundle", &skill)
+            .unwrap();
+
+        // Check the file was created with correct path and content
+        let expected_path = target_dir.join(".cursor/rules/test-bundle-my-rule/RULE.md");
+        assert_eq!(result, expected_path);
+        assert!(expected_path.exists());
+
+        let content = fs::read_to_string(&expected_path).unwrap();
+        assert!(content.starts_with("---\nname: test-bundle-my-rule\n---\n"));
+        assert!(content.contains("# My Rule"));
     }
 }

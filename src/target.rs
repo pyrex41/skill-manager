@@ -126,7 +126,7 @@ impl Tool {
                 fs::create_dir_all(&dest_dir)?;
 
                 let dest_file = dest_dir.join(format!("{}.md", combined_name));
-                fs::copy(&skill.path, &dest_file)?;
+                transform_agent_file(&skill.path, &dest_file)?;
 
                 Ok(dest_file)
             }
@@ -230,6 +230,103 @@ fn transform_skill_file(src: &PathBuf, dest: &PathBuf, skill_name: &str) -> Resu
 
     let mut file = fs::File::create(dest)?;
     file.write_all(output.as_bytes())?;
+
+    Ok(())
+}
+
+/// Transform an agent file for OpenCode format, converting tools from string to YAML object
+fn transform_agent_file(src: &PathBuf, dest: &PathBuf) -> Result<()> {
+    let content = fs::read_to_string(src)?;
+    let lines: Vec<&str> = content.lines().collect();
+
+    if lines.first() != Some(&"---") {
+        // No frontmatter, just copy as-is
+        fs::copy(src, dest)?;
+        return Ok(());
+    }
+
+    // Parse frontmatter and transform
+    let mut result = String::new();
+    let mut in_frontmatter = false;
+    let mut frontmatter_lines = Vec::new();
+    let mut body_lines = Vec::new();
+    let mut found_end = false;
+
+    for line in &lines {
+        if *line == "---" {
+            if in_frontmatter {
+                // End of frontmatter
+                found_end = true;
+                in_frontmatter = false;
+                continue;
+            } else {
+                // Start of frontmatter
+                in_frontmatter = true;
+                continue;
+            }
+        }
+
+        if in_frontmatter && !found_end {
+            frontmatter_lines.push(*line);
+        } else {
+            body_lines.push(*line);
+        }
+    }
+
+    // Transform frontmatter
+    result.push_str("---\n");
+
+    let mut i = 0;
+    while i < frontmatter_lines.len() {
+        let line = frontmatter_lines[i];
+
+        if line.trim().starts_with("tools:") && line.contains(",") {
+            // Found tools string, convert to object
+            let tools_str = line.trim_start_matches("tools:").trim();
+            let tool_list: Vec<&str> = tools_str.split(',').map(|s| s.trim()).collect();
+
+            result.push_str("tools:\n");
+
+            for tool in tool_list {
+                let opencode_tool = match tool {
+                    "Read" => "read",
+                    "Grep" => "grep",
+                    "Glob" => "glob",
+                    "LS" => "bash",
+                    "WebSearch" => "websearch",
+                    "WebFetch" => "webfetch",
+                    "TodoWrite" => "todowrite",
+                    _ => {
+                        // Unknown tool, skip or keep as-is
+                        eprintln!("Warning: Unknown tool '{}' in agent file, skipping", tool);
+                        continue;
+                    }
+                };
+                result.push_str(&format!("  {}: true\n", opencode_tool));
+            }
+        } else if line.trim().starts_with("color:") {
+            // Remove invalid color field
+            i += 1;
+            continue;
+        } else {
+            // Keep other fields
+            result.push_str(line);
+            result.push('\n');
+        }
+
+        i += 1;
+    }
+
+    result.push_str("---\n");
+
+    // Add body
+    for line in body_lines {
+        result.push_str(line);
+        result.push('\n');
+    }
+
+    let mut file = fs::File::create(dest)?;
+    file.write_all(result.as_bytes())?;
 
     Ok(())
 }
@@ -380,5 +477,78 @@ mod tests {
         let content = fs::read_to_string(&expected_path).unwrap();
         assert!(content.starts_with("---\nname: test-bundle-my-rule\n---\n"));
         assert!(content.contains("# My Rule"));
+    }
+
+    #[test]
+    fn test_transform_agent_file_tools_conversion() {
+        let temp_dir = tempdir().unwrap();
+        let src_path = temp_dir.path().join("source.md");
+        let dest_path = temp_dir.path().join("dest.md");
+
+        // Create source agent file with Claude format
+        let src_content = r#"---
+name: test-agent
+description: Test agent
+tools: Read, Grep, Glob, LS
+model: sonnet
+color: yellow
+---
+This is the agent content.
+"#;
+        fs::write(&src_path, src_content).unwrap();
+
+        // Transform to OpenCode format
+        transform_agent_file(&src_path, &dest_path).unwrap();
+
+        // Check the result
+        let result = fs::read_to_string(&dest_path).unwrap();
+        assert!(result.contains("name: test-agent"));
+        assert!(result.contains("description: Test agent"));
+        assert!(result.contains("tools:"));
+        assert!(result.contains("  read: true"));
+        assert!(result.contains("  grep: true"));
+        assert!(result.contains("  glob: true"));
+        assert!(result.contains("  bash: true"));
+        assert!(result.contains("model: sonnet"));
+        assert!(!result.contains("color: yellow")); // Should be removed
+        assert!(result.contains("This is the agent content."));
+    }
+
+    #[test]
+    fn test_write_opencode_agent() {
+        let temp_dir = tempdir().unwrap();
+        let target_dir = temp_dir.path().to_path_buf();
+
+        // Create source agent file with Claude format
+        let src_content = r#"---
+name: test-agent
+tools: Read, Grep
+---
+Agent content here.
+"#;
+        let src_path = temp_dir.path().join("source.md");
+        fs::write(&src_path, src_content).unwrap();
+
+        let skill = SkillFile {
+            name: "test-agent".to_string(),
+            path: src_path,
+            skill_type: SkillType::Agent,
+        };
+
+        // Write to OpenCode format
+        let result = Tool::OpenCode
+            .write_file(&target_dir, "test-bundle", &skill)
+            .unwrap();
+
+        // Check the file was created and transformed
+        let expected_path = target_dir.join(".opencode/agent/test-bundle-test-agent.md");
+        assert_eq!(result, expected_path);
+        assert!(expected_path.exists());
+
+        let content = fs::read_to_string(&expected_path).unwrap();
+        assert!(content.contains("tools:"));
+        assert!(content.contains("  read: true"));
+        assert!(content.contains("  grep: true"));
+        assert!(content.contains("Agent content here."));
     }
 }

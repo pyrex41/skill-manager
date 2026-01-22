@@ -539,6 +539,25 @@ fn sources_interactive() -> Result<()> {
         }
     }
 
+    // Auto-update git sources on exit
+    let config = Config::load_or_default()?;
+    let git_sources = config.git_sources();
+    if !git_sources.is_empty() {
+        println!();
+        println!("{}", "Updating git sources...".dimmed());
+        for source in git_sources {
+            match source.pull() {
+                Ok(true) => {
+                    println!("  {} {}", "Updated:".green(), source.url());
+                }
+                Ok(false) => {} // Already up to date, stay quiet
+                Err(e) => {
+                    println!("  {} {}: {}", "Error:".red(), source.url(), e);
+                }
+            }
+        }
+    }
+
     Ok(())
 }
 

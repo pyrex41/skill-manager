@@ -2,6 +2,7 @@ mod bundle;
 mod config;
 mod discover;
 mod install;
+mod manifest;
 mod setup;
 mod source;
 mod target;
@@ -15,7 +16,7 @@ use std::path::PathBuf;
 
 use crate::bundle::SkillType;
 use crate::config::{Config, SourceConfig};
-use crate::install::install_bundle;
+use crate::install::{install_bundle, install_bundle_from_source, install_from_source};
 use crate::setup::run_setup_wizard;
 use crate::target::Tool;
 
@@ -124,12 +125,15 @@ enum SourcesAction {
     List,
     /// Add a source (local path or git URL)
     Add {
+        /// Optional name for the source (e.g., "fg")
+        #[arg(value_name = "NAME")]
+        name: Option<String>,
         /// Path or URL to add
         path: String,
     },
     /// Remove a source
     Remove {
-        /// Path or URL to remove
+        /// Path, URL, or name to remove
         path: String,
     },
 }
@@ -194,7 +198,7 @@ fn main() -> Result<()> {
             bundle: bundle_name,
         }) => {
             // `skm add <bundle>` is an alias for `skm <bundle>`
-            install_bundle(&config, &bundle_name, &tool, &target_dir, &types)?;
+            do_install(&config, &bundle_name, &tool, &target_dir, &types)?;
         }
         Some(Commands::List) => {
             browse_bundles(&config)?;
@@ -203,8 +207,8 @@ fn main() -> Result<()> {
             Some(SourcesAction::List) => {
                 sources_list(&config)?;
             }
-            Some(SourcesAction::Add { path }) => {
-                sources_add(path)?;
+            Some(SourcesAction::Add { name, path }) => {
+                sources_add(name, path)?;
             }
             Some(SourcesAction::Remove { path }) => {
                 sources_remove(path)?;
@@ -245,7 +249,7 @@ fn main() -> Result<()> {
             // No subcommand - either list bundles or install a bundle
             if let Some(bundle_name) = cli.bundle {
                 // Install the specified bundle
-                install_bundle(&config, &bundle_name, &tool, &target_dir, &types)?;
+                do_install(&config, &bundle_name, &tool, &target_dir, &types)?;
             } else {
                 // List available bundles
                 list_bundles(&config)?;
@@ -300,10 +304,23 @@ fn browse_bundles(config: &Config) -> Result<()> {
         println!();
 
         // Build display items with searchable content
-        // Format: "name | author | counts | source"
+        // Format: "name | description | author | counts | source"
         let items: Vec<String> = all_bundles
             .iter()
             .map(|(source, bundle)| {
+                let desc = bundle
+                    .meta
+                    .description
+                    .as_ref()
+                    .map(|d| {
+                        // Truncate long descriptions
+                        if d.len() > 40 {
+                            format!("{}...", &d[..37])
+                        } else {
+                            d.clone()
+                        }
+                    })
+                    .unwrap_or_default();
                 let author = bundle
                     .meta
                     .author
@@ -316,16 +333,28 @@ fn browse_bundles(config: &Config) -> Result<()> {
                     bundle.agents.len(),
                     bundle.commands.len()
                 );
-                // Include searchable content (name, author, skill names)
+                // Include searchable content (name, author, description, skill names)
                 let search_hint = bundle.search_string();
-                format!(
-                    "{:<20} {:<15} {} {} [{}]",
-                    bundle.name,
-                    author.dimmed(),
-                    counts.dimmed(),
-                    format!("({})", source).dimmed(),
-                    search_hint.dimmed()
-                )
+                if desc.is_empty() {
+                    format!(
+                        "{:<20} {:<15} {} {} [{}]",
+                        bundle.name,
+                        author.dimmed(),
+                        counts.dimmed(),
+                        format!("({})", source).dimmed(),
+                        search_hint.dimmed()
+                    )
+                } else {
+                    format!(
+                        "{:<20} {} {:<15} {} {} [{}]",
+                        bundle.name,
+                        desc.dimmed(),
+                        author.dimmed(),
+                        counts.dimmed(),
+                        format!("({})", source).dimmed(),
+                        search_hint.dimmed()
+                    )
+                }
             })
             .collect();
 
@@ -463,10 +492,15 @@ fn sources_interactive() -> Result<()> {
                     SourceConfig::Git { .. } => "git",
                 };
                 let priority = format!("[{}]", i + 1).dimmed();
+                let name_display = source
+                    .name()
+                    .map(|n| format!(" ({})", n.yellow()))
+                    .unwrap_or_default();
                 println!(
-                    "  {} {} {}",
+                    "  {} {}{} {}",
                     priority,
                     source.display().cyan(),
+                    name_display,
                     format!("({})", type_label).dimmed()
                 );
             }
@@ -490,7 +524,7 @@ fn sources_interactive() -> Result<()> {
                 let path: String = Input::with_theme(&ColorfulTheme::default())
                     .with_prompt("Enter path or git URL")
                     .interact_text()?;
-                sources_add(path)?;
+                sources_add(None, path)?;
             }
             "Remove source" => {
                 if sources.is_empty() {
@@ -576,10 +610,15 @@ fn sources_list(config: &Config) -> Result<()> {
                 SourceConfig::Local { .. } => "local",
                 SourceConfig::Git { .. } => "git",
             };
+            let name_display = source
+                .name()
+                .map(|n| format!("[{}] ", n.cyan()))
+                .unwrap_or_default();
             println!(
-                "  {}. {} {}",
+                "  {}. {}{} {}",
                 i + 1,
-                source.display().cyan(),
+                name_display,
+                source.display(),
                 format!("({})", type_label).dimmed()
             );
         }
@@ -589,13 +628,16 @@ fn sources_list(config: &Config) -> Result<()> {
     Ok(())
 }
 
-fn sources_add(path: String) -> Result<()> {
+fn sources_add(name: Option<String>, path: String) -> Result<()> {
     let mut config = Config::load_or_default()?;
 
     // Determine if this is a git URL or local path
     let source =
         if path.starts_with("https://") || path.starts_with("git@") || path.ends_with(".git") {
-            SourceConfig::Git { url: path.clone() }
+            SourceConfig::Git {
+                url: path.clone(),
+                name,
+            }
         } else {
             // Normalize local path
             let normalized = if path.starts_with("~/") || path.starts_with('/') {
@@ -605,11 +647,14 @@ fn sources_add(path: String) -> Result<()> {
                 let cwd = std::env::current_dir()?;
                 cwd.join(&path).to_string_lossy().to_string()
             };
-            SourceConfig::Local { path: normalized }
+            SourceConfig::Local {
+                path: normalized,
+                name,
+            }
         };
 
     // Check if path exists for local sources
-    if let SourceConfig::Local { ref path } = source {
+    if let SourceConfig::Local { ref path, .. } = source {
         let expanded = if path.starts_with("~/") {
             let home = std::env::var("HOME")?;
             PathBuf::from(format!("{}/{}", home, &path[2..]))
@@ -735,11 +780,17 @@ fn list_bundles(config: &Config) -> Result<()> {
         println!("  {} {}", "Source:".dimmed(), source.display_path());
 
         for bundle in bundles {
-            println!("    {}/", bundle.name.cyan());
+            // Show description on same line if available
+            if let Some(desc) = &bundle.meta.description {
+                println!("    {}/ - {}", bundle.name.cyan(), desc.dimmed());
+            } else {
+                println!("    {}/", bundle.name.cyan());
+            }
 
             let skill_count = bundle.skills.len();
             let agent_count = bundle.agents.len();
             let command_count = bundle.commands.len();
+            let rule_count = bundle.rules.len();
 
             if skill_count > 0 {
                 println!("      {:<10} {} files", "skills/", skill_count);
@@ -749,6 +800,9 @@ fn list_bundles(config: &Config) -> Result<()> {
             }
             if command_count > 0 {
                 println!("      {:<10} {} files", "commands/", command_count);
+            }
+            if rule_count > 0 {
+                println!("      {:<10} {} files", "rules/", rule_count);
             }
         }
         println!();
@@ -1153,6 +1207,59 @@ fn convert_to_command(content: &str) -> String {
     } else {
         // No frontmatter, return as-is
         content.to_string()
+    }
+}
+
+/// Parse a bundle reference that may be source-scoped.
+/// "fg/synapse-docs" → (Some("fg"), Some("synapse-docs"))
+/// "fg" → (None, Some("fg")) - could be source name OR bundle name
+fn parse_bundle_ref(input: &str) -> (Option<&str>, Option<&str>) {
+    if let Some((source, bundle)) = input.split_once('/') {
+        (Some(source), Some(bundle))
+    } else {
+        (None, Some(input))
+    }
+}
+
+/// Dispatch install command with support for source-scoped references
+fn do_install(
+    config: &Config,
+    bundle_ref: &str,
+    tool: &Tool,
+    target_dir: &PathBuf,
+    types: &[SkillType],
+) -> Result<()> {
+    let (source_name, bundle_name) = parse_bundle_ref(bundle_ref);
+
+    match (source_name, bundle_name) {
+        (Some(source_name), Some(bundle_name)) => {
+            // Explicit source/bundle: "fg/synapse-docs"
+            match config.find_source_by_name(source_name) {
+                Some((source, _)) => {
+                    install_bundle_from_source(source.as_ref(), bundle_name, tool, target_dir, types)
+                }
+                None => {
+                    anyhow::bail!("Source '{}' not found. Add it with: skm sources add {} <path>", source_name, source_name);
+                }
+            }
+        }
+        (None, Some(name)) => {
+            // Just a name - could be a source name or bundle name
+            // First check if it's a named source
+            if let Some((source, _)) = config.find_source_by_name(name) {
+                // Install all bundles from this source
+                return install_from_source(source.as_ref(), tool, target_dir, types);
+            }
+
+            // Otherwise, search all sources for a bundle with this name
+            install_bundle(config, name, tool, target_dir, types)
+        }
+        (None, None) => {
+            anyhow::bail!("No bundle specified");
+        }
+        (Some(_), None) => {
+            anyhow::bail!("Invalid bundle reference");
+        }
     }
 }
 

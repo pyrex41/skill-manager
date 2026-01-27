@@ -17,9 +17,17 @@ pub struct Config {
 #[serde(tag = "type")]
 pub enum SourceConfig {
     #[serde(rename = "local")]
-    Local { path: String },
+    Local {
+        path: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        name: Option<String>,
+    },
     #[serde(rename = "git")]
-    Git { url: String },
+    Git {
+        url: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        name: Option<String>,
+    },
 }
 
 impl Config {
@@ -54,6 +62,7 @@ impl Config {
                 default_tool: "claude".to_string(),
                 sources: vec![SourceConfig::Local {
                     path: "~/.claude-skills".to_string(),
+                    name: None,
                 }],
             })
         }
@@ -92,11 +101,11 @@ impl Config {
         self.sources
             .iter()
             .filter_map(|s| match s {
-                SourceConfig::Local { path } => {
+                SourceConfig::Local { path, .. } => {
                     let expanded = expand_tilde(path);
                     Some(Box::new(LocalSource::new(expanded)) as Box<dyn Source>)
                 }
-                SourceConfig::Git { url } => match GitSource::new(url.clone()) {
+                SourceConfig::Git { url, .. } => match GitSource::new(url.clone()) {
                     Ok(source) => Some(Box::new(source) as Box<dyn Source>),
                     Err(e) => {
                         eprintln!("Warning: Could not initialize git source {}: {}", url, e);
@@ -112,7 +121,7 @@ impl Config {
         self.sources
             .iter()
             .filter_map(|s| match s {
-                SourceConfig::Git { url } => GitSource::new(url.clone()).ok(),
+                SourceConfig::Git { url, .. } => GitSource::new(url.clone()).ok(),
                 _ => None,
             })
             .collect()
@@ -127,8 +136,10 @@ impl Config {
     pub fn add_source(&mut self, source: SourceConfig) {
         // Check if source already exists
         let exists = self.sources.iter().any(|s| match (s, &source) {
-            (SourceConfig::Local { path: p1 }, SourceConfig::Local { path: p2 }) => p1 == p2,
-            (SourceConfig::Git { url: u1 }, SourceConfig::Git { url: u2 }) => u1 == u2,
+            (SourceConfig::Local { path: p1, .. }, SourceConfig::Local { path: p2, .. }) => {
+                p1 == p2
+            }
+            (SourceConfig::Git { url: u1, .. }, SourceConfig::Git { url: u2, .. }) => u1 == u2,
             _ => false,
         });
 
@@ -147,18 +158,22 @@ impl Config {
         Ok(())
     }
 
-    /// Remove a source from the config by path/url
+    /// Remove a source from the config by path/url or name
     pub fn remove_source(&mut self, path_or_url: &str) -> bool {
         let initial_len = self.sources.len();
         // Expand the input path for comparison (handles ~/foo vs /home/user/foo)
         let input_expanded = expand_tilde(path_or_url);
 
         self.sources.retain(|s| match s {
-            SourceConfig::Local { path } => {
-                // Compare both the raw string and expanded paths
-                path != path_or_url && expand_tilde(path) != input_expanded
+            SourceConfig::Local { path, name } => {
+                // Compare both the raw string and expanded paths, and also by name
+                path != path_or_url
+                    && expand_tilde(path) != input_expanded
+                    && name.as_deref() != Some(path_or_url)
             }
-            SourceConfig::Git { url } => url != path_or_url,
+            SourceConfig::Git { url, name } => {
+                url != path_or_url && name.as_deref() != Some(path_or_url)
+            }
         });
         self.sources.len() < initial_len
     }
@@ -180,14 +195,43 @@ impl Config {
         }
         Ok(None)
     }
+
+    /// Find a source by its name
+    pub fn find_source_by_name(&self, name: &str) -> Option<(Box<dyn Source>, &SourceConfig)> {
+        for source_config in &self.sources {
+            if source_config.name() == Some(name) {
+                let source: Option<Box<dyn Source>> = match source_config {
+                    SourceConfig::Local { path, .. } => {
+                        let expanded = expand_tilde(path);
+                        Some(Box::new(LocalSource::new(expanded)))
+                    }
+                    SourceConfig::Git { url, .. } => GitSource::new(url.clone())
+                        .ok()
+                        .map(|s| Box::new(s) as Box<dyn Source>),
+                };
+                if let Some(source) = source {
+                    return Some((source, source_config));
+                }
+            }
+        }
+        None
+    }
 }
 
 impl SourceConfig {
     /// Get display string for this source
     pub fn display(&self) -> &str {
         match self {
-            SourceConfig::Local { path } => path,
-            SourceConfig::Git { url } => url,
+            SourceConfig::Local { path, .. } => path,
+            SourceConfig::Git { url, .. } => url,
+        }
+    }
+
+    /// Get the optional name for this source
+    pub fn name(&self) -> Option<&str> {
+        match self {
+            SourceConfig::Local { name, .. } => name.as_deref(),
+            SourceConfig::Git { name, .. } => name.as_deref(),
         }
     }
 }

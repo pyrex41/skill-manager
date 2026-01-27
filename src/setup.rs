@@ -31,7 +31,7 @@ pub fn run_setup_wizard() -> Result<Config> {
             let path = "~/.claude-skills".to_string();
             println!();
             println!("  {} {}", "Adding source:".dimmed(), path);
-            vec![SourceConfig::Local { path }]
+            vec![SourceConfig::Local { path, name: None }]
         }
         1 => {
             // Custom path
@@ -49,7 +49,7 @@ pub fn run_setup_wizard() -> Result<Config> {
 
             println!();
             println!("  {} {}", "Adding source:".dimmed(), path);
-            vec![SourceConfig::Local { path }]
+            vec![SourceConfig::Local { path, name: None }]
         }
         2 => {
             // Skip

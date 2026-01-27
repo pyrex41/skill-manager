@@ -1,7 +1,7 @@
 use anyhow::Result;
 use std::fs;
 use std::io::Write;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use crate::bundle::{SkillFile, SkillType};
 
@@ -108,6 +108,8 @@ impl Tool {
             _ => { fs::copy(&skill.path, &dest_file)?; }
         }
 
+        copy_companion_files(skill, &dest_dir)?;
+
         Ok(dest_file)
     }
 
@@ -132,6 +134,8 @@ impl Tool {
                 let dest_file = dest_dir.join("SKILL.md");
                 transform_skill_file(&skill.path, &dest_file, &combined_name)?;
 
+                copy_companion_files(skill, &dest_dir)?;
+
                 Ok(dest_file)
             }
             SkillType::Rule => {
@@ -141,9 +145,12 @@ impl Tool {
                 let dest_file = dest_dir.join("RULE.md");
                 transform_skill_file(&skill.path, &dest_file, &combined_name)?;
 
+                copy_companion_files(skill, &dest_dir)?;
+
                 Ok(dest_file)
             }
             SkillType::Agent => {
+                // Flat file target — companion files not applicable
                 let dest_dir = target_dir.join(".opencode/agent");
                 fs::create_dir_all(&dest_dir)?;
 
@@ -157,6 +164,7 @@ impl Tool {
                 Ok(dest_file)
             }
             SkillType::Command => {
+                // Flat file target — companion files not applicable
                 let dest_dir = target_dir.join(".opencode/command");
                 fs::create_dir_all(&dest_dir)?;
 
@@ -189,6 +197,8 @@ impl Tool {
                 let dest_file = dest_dir.join("SKILL.md");
                 transform_skill_file(&skill.path, &dest_file, &combined_name)?;
 
+                copy_companion_files(skill, &dest_dir)?;
+
                 Ok(dest_file)
             }
             _ => {
@@ -198,6 +208,8 @@ impl Tool {
 
                 let dest_file = dest_dir.join("RULE.md");
                 transform_cursor_rule(&skill.path, &dest_file, &combined_name)?;
+
+                copy_companion_files(skill, &dest_dir)?;
 
                 Ok(dest_file)
             }
@@ -657,6 +669,71 @@ fn transform_cursor_rule(src: &PathBuf, dest: &PathBuf, _skill_name: &str) -> Re
 }
 
 // ---------------------------------------------------------------------------
+// Companion file copying
+// ---------------------------------------------------------------------------
+
+/// Copy companion files from source_dir to dest_dir, skipping the main .md file.
+/// Companion files are scripts, templates, and other resources that live alongside
+/// the main skill/rule markdown file in directory-based bundles.
+fn copy_companion_files(skill: &SkillFile, dest_dir: &Path) -> Result<()> {
+    let source_dir = match &skill.source_dir {
+        Some(dir) => dir,
+        None => return Ok(()),
+    };
+
+    let main_file = &skill.path;
+
+    for entry in fs::read_dir(source_dir)? {
+        let entry = entry?;
+        let entry_path = entry.path();
+
+        // Skip the main markdown file
+        if entry_path == *main_file {
+            continue;
+        }
+
+        let file_name = match entry.file_name().into_string() {
+            Ok(name) => name,
+            Err(_) => continue,
+        };
+
+        // Skip meta.yaml (resources format metadata, not a companion)
+        if file_name == "meta.yaml" {
+            continue;
+        }
+
+        let dest_path = dest_dir.join(&file_name);
+
+        if entry_path.is_dir() {
+            copy_dir_recursive(&entry_path, &dest_path)?;
+        } else {
+            fs::copy(&entry_path, &dest_path)?;
+        }
+    }
+
+    Ok(())
+}
+
+/// Recursively copy a directory tree from src to dest.
+fn copy_dir_recursive(src: &Path, dest: &Path) -> Result<()> {
+    fs::create_dir_all(dest)?;
+
+    for entry in fs::read_dir(src)? {
+        let entry = entry?;
+        let entry_path = entry.path();
+        let dest_path = dest.join(entry.file_name());
+
+        if entry_path.is_dir() {
+            copy_dir_recursive(&entry_path, &dest_path)?;
+        } else {
+            fs::copy(&entry_path, &dest_path)?;
+        }
+    }
+
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
 
@@ -924,6 +1001,7 @@ This is the agent content.
             name: "oc-agent".to_string(),
             path: src_path,
             skill_type: SkillType::Agent,
+            source_dir: None,
         };
 
         let result = Tool::Claude.write_file(&target_dir, "bundle", &skill).unwrap();
@@ -948,6 +1026,7 @@ This is the agent content.
             name: "cl-agent".to_string(),
             path: src_path,
             skill_type: SkillType::Agent,
+            source_dir: None,
         };
 
         let result = Tool::OpenCode.write_file(&target_dir, "bundle", &skill).unwrap();
@@ -973,6 +1052,7 @@ This is the agent content.
             name: "oc-agent".to_string(),
             path: src_path,
             skill_type: SkillType::Agent,
+            source_dir: None,
         };
 
         let result = Tool::OpenCode.write_file(&target_dir, "bundle", &skill).unwrap();
@@ -999,6 +1079,7 @@ This is the agent content.
             name: "my-skill".to_string(),
             path: src_path,
             skill_type: SkillType::Skill,
+            source_dir: None,
         };
 
         let result = Tool::OpenCode.write_file(&target_dir, "test-bundle", &skill).unwrap();
@@ -1026,6 +1107,7 @@ This is the agent content.
             name: "my-skill".to_string(),
             path: src_path,
             skill_type: SkillType::Skill,
+            source_dir: None,
         };
 
         let result = Tool::Cursor.write_file(&target_dir, "test-bundle", &skill).unwrap();
@@ -1055,6 +1137,7 @@ This is the agent content.
             name: "my-rule".to_string(),
             path: src_path,
             skill_type: SkillType::Rule,
+            source_dir: None,
         };
 
         let result = Tool::Cursor.write_file(&target_dir, "test-bundle", &skill).unwrap();
@@ -1114,6 +1197,7 @@ This is the agent content.
             name: "my-agent".to_string(),
             path: src_path,
             skill_type: SkillType::Agent,
+            source_dir: None,
         };
 
         let result = Tool::Cursor.write_file(&target_dir, "tb", &skill).unwrap();
@@ -1144,6 +1228,7 @@ Agent content here.
             name: "test-agent".to_string(),
             path: src_path,
             skill_type: SkillType::Agent,
+            source_dir: None,
         };
 
         let result = Tool::OpenCode.write_file(&target_dir, "test-bundle", &skill).unwrap();
@@ -1157,5 +1242,159 @@ Agent content here.
         assert!(content.contains("  read: true"));
         assert!(content.contains("  grep: true"));
         assert!(content.contains("Agent content here."));
+    }
+
+    // ---- Companion file copying ----
+
+    #[test]
+    fn test_companion_files_copied_claude() {
+        let temp_dir = tempdir().unwrap();
+        let target_dir = temp_dir.path().join("target");
+        fs::create_dir_all(&target_dir).unwrap();
+
+        // Set up a source directory with SKILL.md and companion files
+        let source_dir = temp_dir.path().join("source/skills/pptx");
+        fs::create_dir_all(&source_dir).unwrap();
+
+        let skill_md = source_dir.join("SKILL.md");
+        fs::write(&skill_md, "# PPTX Skill\n\nCreates presentations.").unwrap();
+
+        // Companion files
+        fs::write(source_dir.join("ooxml.md"), "# OOXML Reference").unwrap();
+        let scripts_dir = source_dir.join("scripts");
+        fs::create_dir_all(&scripts_dir).unwrap();
+        fs::write(scripts_dir.join("build.sh"), "#!/bin/bash\necho hello").unwrap();
+
+        // Nested subdir in scripts
+        let nested = scripts_dir.join("lib");
+        fs::create_dir_all(&nested).unwrap();
+        fs::write(nested.join("helper.py"), "print('hi')").unwrap();
+
+        let skill = SkillFile {
+            name: "pptx".to_string(),
+            path: skill_md,
+            skill_type: SkillType::Skill,
+            source_dir: Some(source_dir),
+        };
+
+        Tool::Claude.write_file(&target_dir, "my-bundle", &skill).unwrap();
+
+        let dest_dir = target_dir.join(".claude/skills/my-bundle");
+        // Main file should exist
+        assert!(dest_dir.join("pptx.md").exists());
+        // Companion .md file
+        assert!(dest_dir.join("ooxml.md").exists());
+        assert_eq!(
+            fs::read_to_string(dest_dir.join("ooxml.md")).unwrap(),
+            "# OOXML Reference"
+        );
+        // Script file in subdirectory
+        assert!(dest_dir.join("scripts/build.sh").exists());
+        // Nested file
+        assert!(dest_dir.join("scripts/lib/helper.py").exists());
+    }
+
+    #[test]
+    fn test_companion_files_copied_opencode_skill() {
+        let temp_dir = tempdir().unwrap();
+        let target_dir = temp_dir.path().join("target");
+        fs::create_dir_all(&target_dir).unwrap();
+
+        let source_dir = temp_dir.path().join("source/skills/pptx");
+        fs::create_dir_all(&source_dir).unwrap();
+
+        let skill_md = source_dir.join("SKILL.md");
+        fs::write(&skill_md, "# PPTX Skill").unwrap();
+        fs::write(source_dir.join("template.pptx"), "binary content").unwrap();
+
+        let skill = SkillFile {
+            name: "pptx".to_string(),
+            path: skill_md,
+            skill_type: SkillType::Skill,
+            source_dir: Some(source_dir),
+        };
+
+        Tool::OpenCode.write_file(&target_dir, "bundle", &skill).unwrap();
+
+        let dest_dir = target_dir.join(".opencode/skill/bundle-pptx");
+        assert!(dest_dir.join("SKILL.md").exists());
+        assert!(dest_dir.join("template.pptx").exists());
+    }
+
+    #[test]
+    fn test_companion_files_copied_cursor_skill() {
+        let temp_dir = tempdir().unwrap();
+        let target_dir = temp_dir.path().join("target");
+        fs::create_dir_all(&target_dir).unwrap();
+
+        let source_dir = temp_dir.path().join("source/skills/pptx");
+        fs::create_dir_all(&source_dir).unwrap();
+
+        let skill_md = source_dir.join("SKILL.md");
+        fs::write(&skill_md, "# PPTX Skill").unwrap();
+        fs::write(source_dir.join("reference.md"), "# Ref").unwrap();
+
+        let skill = SkillFile {
+            name: "pptx".to_string(),
+            path: skill_md,
+            skill_type: SkillType::Skill,
+            source_dir: Some(source_dir),
+        };
+
+        Tool::Cursor.write_file(&target_dir, "bundle", &skill).unwrap();
+
+        let dest_dir = target_dir.join(".cursor/skills/bundle-pptx");
+        assert!(dest_dir.join("SKILL.md").exists());
+        assert!(dest_dir.join("reference.md").exists());
+    }
+
+    #[test]
+    fn test_companion_files_skips_meta_yaml() {
+        let temp_dir = tempdir().unwrap();
+        let target_dir = temp_dir.path().join("target");
+        fs::create_dir_all(&target_dir).unwrap();
+
+        let source_dir = temp_dir.path().join("source/skills/pptx");
+        fs::create_dir_all(&source_dir).unwrap();
+
+        let skill_md = source_dir.join("SKILL.md");
+        fs::write(&skill_md, "# PPTX Skill").unwrap();
+        fs::write(source_dir.join("meta.yaml"), "name: pptx\nauthor: test").unwrap();
+        fs::write(source_dir.join("helper.py"), "print('hi')").unwrap();
+
+        let skill = SkillFile {
+            name: "pptx".to_string(),
+            path: skill_md,
+            skill_type: SkillType::Skill,
+            source_dir: Some(source_dir),
+        };
+
+        Tool::Claude.write_file(&target_dir, "bundle", &skill).unwrap();
+
+        let dest_dir = target_dir.join(".claude/skills/bundle");
+        assert!(dest_dir.join("pptx.md").exists());
+        assert!(dest_dir.join("helper.py").exists());
+        // meta.yaml should NOT be copied
+        assert!(!dest_dir.join("meta.yaml").exists());
+    }
+
+    #[test]
+    fn test_no_companion_files_when_source_dir_none() {
+        let temp_dir = tempdir().unwrap();
+        let target_dir = temp_dir.path().to_path_buf();
+
+        let src_path = temp_dir.path().join("source.md");
+        fs::write(&src_path, "# Simple Skill").unwrap();
+
+        let skill = SkillFile {
+            name: "simple".to_string(),
+            path: src_path,
+            skill_type: SkillType::Skill,
+            source_dir: None,
+        };
+
+        // Should succeed without errors even though source_dir is None
+        let result = Tool::Claude.write_file(&target_dir, "bundle", &skill).unwrap();
+        assert!(result.exists());
     }
 }

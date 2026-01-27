@@ -121,6 +121,7 @@ fn scan_component_dir(dir: &PathBuf, skill_type: SkillType) -> anyhow::Result<Ve
                 name,
                 path,
                 skill_type,
+                source_dir: None,
             });
         } else if path.is_dir() {
             // Directory format: look for SKILL.md, AGENT.md, COMMAND.md, RULE.md, or any .md
@@ -144,6 +145,7 @@ fn scan_component_dir(dir: &PathBuf, skill_type: SkillType) -> anyhow::Result<Ve
                         name: folder_name,
                         path: md_path,
                         skill_type,
+                        source_dir: Some(path.clone()),
                     });
                     found = true;
                     break;
@@ -167,6 +169,7 @@ fn scan_component_dir(dir: &PathBuf, skill_type: SkillType) -> anyhow::Result<Ve
                                 name: folder_name,
                                 path: sub_path,
                                 skill_type,
+                                source_dir: Some(path.clone()),
                             });
                             break;
                         }

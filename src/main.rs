@@ -117,6 +117,15 @@ enum Commands {
         #[arg(long)]
         output: Option<PathBuf>,
     },
+    /// Remove an installed bundle
+    Rm {
+        /// Bundle name to remove
+        bundle: String,
+
+        /// Skip confirmation prompt
+        #[arg(short = 'y', long)]
+        yes: bool,
+    },
 }
 
 #[derive(Subcommand)]
@@ -244,6 +253,16 @@ fn main() -> Result<()> {
             output,
         }) => {
             convert_format(&source, to_rule, output.as_ref())?;
+        }
+        Some(Commands::Rm { bundle, yes }) => {
+            let filter_tool = if cli.cursor {
+                Some("cursor")
+            } else if cli.opencode {
+                Some("opencode")
+            } else {
+                None
+            };
+            remove_bundle(&bundle, &target_dir, filter_tool, yes)?;
         }
         None => {
             // No subcommand - either list bundles or install a bundle
@@ -1099,6 +1118,131 @@ fn clean_all_skills(base: &PathBuf, filter_tool: Option<&str>, skip_confirm: boo
     }
     if errors > 0 {
         println!("{} Failed to remove {} skill(s)", "".red(), errors);
+    }
+
+    Ok(())
+}
+
+fn skill_matches_bundle(skill: &crate::discover::InstalledSkill, bundle_name: &str) -> bool {
+    // Claude: bundle field is the actual bundle name
+    if skill.bundle.as_deref() == Some(bundle_name) {
+        return true;
+    }
+    // OpenCode/Cursor: combined name is "{bundle}-{name}"
+    if skill.name.starts_with(&format!("{}-", bundle_name)) {
+        return true;
+    }
+    // Exact name match (single-skill bundles where name == bundle)
+    if skill.name == bundle_name {
+        return true;
+    }
+    false
+}
+
+fn remove_bundle(
+    bundle_name: &str,
+    base: &PathBuf,
+    filter_tool: Option<&str>,
+    skip_confirm: bool,
+) -> Result<()> {
+    use crate::discover::{
+        discover_installed, filter_by_tool, group_by_tool, remove_skill, InstalledTool, SkillType,
+    };
+    use dialoguer::{theme::ColorfulTheme, Confirm};
+
+    let mut skills = discover_installed(base)?;
+
+    if let Some(tool_filter) = filter_tool {
+        skills = filter_by_tool(skills, tool_filter);
+    }
+
+    // Filter to skills belonging to this bundle
+    skills.retain(|s| skill_matches_bundle(s, bundle_name));
+
+    if skills.is_empty() {
+        println!(
+            "No installed skills found for bundle '{}'.",
+            bundle_name.cyan()
+        );
+        return Ok(());
+    }
+
+    // Print what will be removed, grouped by tool
+    println!("{}", "Will remove:".bold());
+    println!();
+
+    let grouped = group_by_tool(&skills);
+    let tool_order = [
+        InstalledTool::Claude,
+        InstalledTool::OpenCode,
+        InstalledTool::Cursor,
+    ];
+    let type_order = [SkillType::Skill, SkillType::Agent, SkillType::Command, SkillType::Rule];
+
+    for tool in &tool_order {
+        if let Some(type_map) = grouped.get(tool) {
+            println!("  {}", tool.display_name().cyan().bold());
+            for skill_type in &type_order {
+                if let Some(skill_list) = type_map.get(skill_type) {
+                    for skill in skill_list {
+                        println!(
+                            "    {}/{} {}",
+                            skill_type.plural().dimmed(),
+                            skill.name,
+                            format!("({})", skill.path.display()).dimmed()
+                        );
+                    }
+                }
+            }
+        }
+    }
+    println!();
+
+    // Confirm unless --yes
+    let confirmed = if skip_confirm {
+        true
+    } else {
+        Confirm::with_theme(&ColorfulTheme::default())
+            .with_prompt(format!(
+                "Remove {} file(s) from bundle '{}'?",
+                skills.len(),
+                bundle_name
+            ))
+            .default(false)
+            .interact()?
+    };
+
+    if !confirmed {
+        println!("{}", "Cancelled.".yellow());
+        return Ok(());
+    }
+
+    // Remove the skills
+    let mut removed = 0;
+    let mut errors = 0;
+
+    for skill in &skills {
+        match remove_skill(skill) {
+            Ok(()) => {
+                removed += 1;
+            }
+            Err(e) => {
+                eprintln!(
+                    "{}: Failed to remove {}: {}",
+                    "Error".red(),
+                    skill.path.display(),
+                    e
+                );
+                errors += 1;
+            }
+        }
+    }
+
+    if removed > 0 {
+        println!("{} Removed {} file(s)", "".green(), removed);
+    }
+    if errors > 0 {
+        println!("{} Failed to remove {} file(s)", "".red(), errors);
     }
 
     Ok(())

@@ -11,21 +11,20 @@ AI coding assistants like Claude Code, OpenCode, and Cursor support custom "skil
 ## How It Works
 
 ```
-┌─────────────────┐      ┌─────────────────┐      ┌─────────────────┐
-│     Sources     │      │     Bundles     │      │     Targets     │
-│                 │      │                 │      │                 │
-│ ~/.claude-skills│ ───► │ my-bundle/      │ ───► │ .claude/        │
-│ ~/my-skills     │      │   skills/       │      │ .opencode/      │
-│ github.com/...  │      │   agents/       │      │ .cursor/        │
-└─────────────────┘      │   commands/     │      └─────────────────┘
-                         └─────────────────┘
+┌──────────────────────┐      ┌─────────────────┐      ┌─────────────────┐
+│       Sources        │      │     Bundles     │      │     Targets     │
+│                      │      │                 │      │                 │
+│ anthropics/skills    │ ───► │ pdf/            │ ───► │ .claude/        │
+│ ~/my-skills          │      │ xlsx/           │      │ .opencode/      │
+│                      │      │ pptx/           │      │ .cursor/        │
+└──────────────────────┘      └─────────────────┘      └─────────────────┘
 ```
 
 1. **Sources** are directories (local or git repos) containing skill bundles
 2. **Bundles** are folders with `skills/`, `agents/`, and/or `commands/` subdirectories
 3. **Targets** are the tool-specific directories where skills get installed
 
-When you run `skm my-bundle`, it copies the bundle's files to the appropriate locations for your chosen tool, applying any necessary transformations.
+When you run `skm pdf`, it copies the bundle's files to the appropriate locations for your chosen tool, applying any necessary transformations.
 
 ## Installation
 
@@ -38,26 +37,24 @@ This installs the `skm` binary. Requires [Rust](https://rustup.rs/) to be instal
 ## Quick Start
 
 ```bash
-# Browse available bundles interactively
-skm list
+# Add the official Anthropic skills repo
+skm sources add https://github.com/anthropics/skills
 
-# Install a bundle to Claude (default)
-skm add my-bundle
-# or just:
-skm my-bundle
+# See what's available
+skm
+
+# Install a skill bundle
+skm pdf
 
 # Install to OpenCode or Cursor instead
-skm my-bundle -o    # OpenCode
-skm my-bundle -c    # Cursor
+skm pdf -o    # OpenCode
+skm pdf -c    # Cursor
 
-# Manage sources interactively
-skm sources
-
-# See what's installed in current directory
+# See what's installed
 skm here
 
-# Remove installed skills interactively
-skm here --remove
+# Remove a bundle
+skm rm pdf
 ```
 
 ## Commands
@@ -68,32 +65,33 @@ Interactive browser with **fuzzy search** for exploring available bundles. Type 
 ```
 Available Bundles (type to search)
 
-> xlsx                 by Anthropic    1s 0a 0c (anthropics/skills)
-  pdf                  by Anthropic    1s 0a 0c (anthropics/skills)
-  my-skill             by username     2s 1a 0c (~/.claude-skills)
+> pdf                  Comprehensive PDF manipulation...      1s 0a 0c (anthropics/skills)
+  xlsx                 Comprehensive spreadsheet...           1s 0a 0c (anthropics/skills)
+  pptx                 Presentation creation, editing...      1s 0a 0c (anthropics/skills)
+  frontend-design      Create distinctive, production...      1s 0a 0c (anthropics/skills)
 ```
 
 ### `skm add <bundle>` or `skm <bundle>`
 Install a bundle to the current directory. Bundles are searched in priority order across all configured sources.
 
 ```bash
-skm add my-bundle         # Install to Claude (default)
-skm add my-bundle -o      # Install to OpenCode
-skm add my-bundle -c      # Install to Cursor
-skm add my-bundle -g      # Install globally
-skm add my-bundle --skills    # Install only skills
-skm add my-bundle --agents    # Install only agents
-skm add my-bundle --commands  # Install only commands
+skm pdf                   # Install to Claude (default)
+skm pdf -o                # Install to OpenCode
+skm pdf -c                # Install to Cursor
+skm pdf -g                # Install globally
+skm add xlsx --skills     # Install only skills
+skm add pptx --agents     # Install only agents
 ```
 
 ### `skm sources`
 Interactive menu to view, add, remove, and reorder sources by priority. Sources are checked in order when searching for bundles.
 
 ```bash
-skm sources           # Interactive management
-skm sources list      # Just list sources
-skm sources add <path>    # Add a local directory or git URL
-skm sources remove <path> # Remove a source
+skm sources                                         # Interactive management
+skm sources list                                    # Just list sources
+skm sources add https://github.com/anthropics/skills    # Add a git source
+skm sources add ~/my-skills                         # Add a local directory
+skm sources remove https://github.com/anthropics/skills # Remove a source
 ```
 
 ### `skm here`
@@ -105,6 +103,15 @@ skm here --tool claude  # Filter by tool
 skm here --remove       # Interactive removal
 skm here --clean        # Remove all (with confirmation)
 skm here --clean --yes  # Remove all without confirmation
+```
+
+### `skm rm <bundle>`
+Remove all installed files belonging to a bundle from the current directory.
+
+```bash
+skm rm pdf                # Remove with confirmation prompt
+skm rm pdf -y             # Skip confirmation
+skm rm pdf -o             # Remove only OpenCode files
 ```
 
 ### `skm update`
@@ -192,12 +199,12 @@ Config file: `~/.config/skm/config.toml`
 default_tool = "claude"
 
 [[sources]]
-type = "local"
-path = "~/.claude-skills"
+type = "git"
+url = "https://github.com/anthropics/skills"
 
 [[sources]]
-type = "git"
-url = "https://github.com/user/skills"
+type = "local"
+path = "~/.my-skills"
 ```
 
 Sources are searched in order (first match wins). Use `skm sources` to manage priority.

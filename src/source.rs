@@ -24,10 +24,50 @@ impl LocalSource {
     }
 }
 
+impl LocalSource {
+    fn list_bundles_from_manifest(
+        &self,
+        manifest: crate::manifest::SourceManifest,
+    ) -> Result<Vec<Bundle>> {
+        let mut bundles = Vec::new();
+        for decl in &manifest.bundles {
+            let bundle_root = self.path.join(&decl.path);
+            if !bundle_root.exists() {
+                eprintln!(
+                    "  {}: bundle path {} does not exist",
+                    "Warning".yellow(),
+                    decl.path
+                );
+                continue;
+            }
+            match crate::manifest::bundle_from_declaration(&self.path, decl) {
+                Ok(bundle) if !bundle.is_empty() => bundles.push(bundle),
+                Ok(_) => {
+                    // Bundle exists but has no files — skip silently
+                }
+                Err(e) => {
+                    eprintln!(
+                        "  {}: failed to scan bundle {}: {}",
+                        "Warning".yellow(),
+                        decl.name,
+                        e
+                    );
+                }
+            }
+        }
+        Ok(bundles)
+    }
+}
+
 impl Source for LocalSource {
     fn list_bundles(&self) -> Result<Vec<Bundle>> {
         if !self.path.exists() {
             return Ok(vec![]);
+        }
+
+        // Check for skm.toml manifest (highest priority)
+        if let Some(manifest) = crate::manifest::load_manifest(&self.path) {
+            return self.list_bundles_from_manifest(manifest);
         }
 
         // Check if this is a resources-format source (has resources/ directory at root)

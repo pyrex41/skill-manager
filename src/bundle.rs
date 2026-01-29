@@ -55,6 +55,9 @@ pub struct SkillFile {
     pub path: PathBuf,
     /// Type of skill
     pub skill_type: SkillType,
+    /// Directory containing companion files (scripts, templates, etc.)
+    /// When set, all sibling files/dirs are copied alongside the main file.
+    pub source_dir: Option<PathBuf>,
 }
 
 /// A bundle containing skills, agents, commands, and rules
@@ -280,6 +283,7 @@ impl Bundle {
                 name: name.clone(),
                 path: skill_md,
                 skill_type: SkillType::Skill,
+                source_dir: Some(skill_dir.clone()),
             };
 
             bundles.push(Bundle {
@@ -347,6 +351,7 @@ impl Bundle {
                     name,
                     path,
                     skill_type,
+                    source_dir: None,
                 });
             }
         }
@@ -385,6 +390,7 @@ impl Bundle {
                         name,
                         path: md_path,
                         skill_type,
+                        source_dir: Some(resource_dir.to_path_buf()),
                     },
                     meta,
                 )));
@@ -402,6 +408,7 @@ impl Bundle {
                         name,
                         path,
                         skill_type,
+                        source_dir: Some(resource_dir.to_path_buf()),
                     },
                     meta,
                 )));
@@ -688,5 +695,37 @@ mod tests {
         let meta = Bundle::extract_frontmatter(&file);
         assert!(meta.is_some());
         assert_eq!(meta.unwrap().name, None);
+    }
+
+    #[test]
+    fn test_anthropic_format_sets_source_dir() {
+        let dir = tempdir().unwrap();
+        let skills_dir = dir.path().join("skills");
+        let skill_dir = skills_dir.join("pptx");
+
+        fs::create_dir_all(&skill_dir).unwrap();
+        fs::write(skill_dir.join("SKILL.md"), "# PPTX Skill").unwrap();
+        // Add companion files
+        fs::write(skill_dir.join("ooxml.md"), "# Reference").unwrap();
+
+        let bundles = Bundle::list_from_anthropic_path(dir.path().to_path_buf()).unwrap();
+        assert_eq!(bundles.len(), 1);
+
+        let skill_file = &bundles[0].skills[0];
+        assert!(skill_file.source_dir.is_some());
+        assert_eq!(skill_file.source_dir.as_ref().unwrap(), &skill_dir);
+    }
+
+    #[test]
+    fn test_flat_scan_has_no_source_dir() {
+        let dir = tempdir().unwrap();
+        let bundle_dir = dir.path().join("my-bundle");
+        let skills_dir = bundle_dir.join("skills");
+        fs::create_dir_all(&skills_dir).unwrap();
+        fs::write(skills_dir.join("simple.md"), "# Simple").unwrap();
+
+        let bundle = Bundle::from_path(bundle_dir).unwrap();
+        assert_eq!(bundle.skills.len(), 1);
+        assert!(bundle.skills[0].source_dir.is_none());
     }
 }

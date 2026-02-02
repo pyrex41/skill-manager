@@ -56,7 +56,10 @@ impl Tool {
     /// Get the destination info string for display
     pub fn dest_info(&self, skill_type: SkillType, bundle_name: &str) -> String {
         match self {
-            Tool::Claude => format!(".claude/{}/{}/", skill_type.dir_name(), bundle_name),
+            Tool::Claude => match skill_type {
+                SkillType::Skill => format!(".claude/skills/{}-*/SKILL.md", bundle_name),
+                _ => format!(".claude/{}/{}-*.md", skill_type.dir_name(), bundle_name),
+            },
             Tool::OpenCode => match skill_type {
                 SkillType::Skill => format!(".opencode/skill/{}-*/", bundle_name),
                 SkillType::Agent => ".opencode/agent/".to_string(),
@@ -70,24 +73,43 @@ impl Tool {
         }
     }
 
-    // Claude: .claude/{type}/{bundle}/{name}.md
+    // Claude:
+    //   skills -> .claude/skills/{bundle}-{name}/SKILL.md (directory-based, with frontmatter)
+    //   agents -> .claude/agents/{bundle}-{name}.md (file-based)
+    //   commands -> .claude/commands/{bundle}-{name}.md (file-based)
+    //   rules -> .claude/rules/{bundle}-{name}.md (file-based)
     fn write_claude(
         &self,
         target_dir: &PathBuf,
         bundle_name: &str,
         skill: &SkillFile,
     ) -> Result<PathBuf> {
-        let dest_dir = target_dir
-            .join(".claude")
-            .join(skill.skill_type.dir_name())
-            .join(bundle_name);
+        let combined_name = format!("{}-{}", bundle_name, skill.name);
 
-        fs::create_dir_all(&dest_dir)?;
+        match skill.skill_type {
+            SkillType::Skill => {
+                // Skills use directory-based format: .claude/skills/{name}/SKILL.md
+                let dest_dir = target_dir.join(".claude/skills").join(&combined_name);
+                fs::create_dir_all(&dest_dir)?;
 
-        let dest_file = dest_dir.join(format!("{}.md", skill.name));
-        fs::copy(&skill.path, &dest_file)?;
+                let dest_file = dest_dir.join("SKILL.md");
+                transform_skill_file(&skill.path, &dest_file, &combined_name)?;
 
-        Ok(dest_file)
+                Ok(dest_file)
+            }
+            _ => {
+                // Agents, commands, and rules use file-based format
+                let dest_dir = target_dir
+                    .join(".claude")
+                    .join(skill.skill_type.dir_name());
+                fs::create_dir_all(&dest_dir)?;
+
+                let dest_file = dest_dir.join(format!("{}.md", combined_name));
+                fs::copy(&skill.path, &dest_file)?;
+
+                Ok(dest_file)
+            }
+        }
     }
 
     // OpenCode:
@@ -550,5 +572,69 @@ Agent content here.
         assert!(content.contains("  read: true"));
         assert!(content.contains("  grep: true"));
         assert!(content.contains("Agent content here."));
+    }
+
+    #[test]
+    fn test_write_claude_skill() {
+        let temp_dir = tempdir().unwrap();
+        let target_dir = temp_dir.path().to_path_buf();
+
+        // Create source skill file
+        let src_content = "# My Skill\n\nContent here";
+        let src_path = temp_dir.path().join("source.md");
+        fs::write(&src_path, src_content).unwrap();
+
+        let skill = SkillFile {
+            name: "my-skill".to_string(),
+            path: src_path,
+            skill_type: SkillType::Skill,
+        };
+
+        // Write to Claude format
+        let result = Tool::Claude
+            .write_file(&target_dir, "test-bundle", &skill)
+            .unwrap();
+
+        // Check the file was created with correct path and content
+        // Claude skills use: .claude/skills/{bundle}-{name}/SKILL.md
+        let expected_path = target_dir.join(".claude/skills/test-bundle-my-skill/SKILL.md");
+        assert_eq!(result, expected_path);
+        assert!(expected_path.exists());
+
+        let content = fs::read_to_string(&expected_path).unwrap();
+        assert!(content.starts_with("---\nname: test-bundle-my-skill\n---\n"));
+        assert!(content.contains("# My Skill"));
+    }
+
+    #[test]
+    fn test_write_claude_command() {
+        let temp_dir = tempdir().unwrap();
+        let target_dir = temp_dir.path().to_path_buf();
+
+        // Create source command file
+        let src_content = "# My Command\n\nContent here";
+        let src_path = temp_dir.path().join("source.md");
+        fs::write(&src_path, src_content).unwrap();
+
+        let skill = SkillFile {
+            name: "my-cmd".to_string(),
+            path: src_path,
+            skill_type: SkillType::Command,
+        };
+
+        // Write to Claude format
+        let result = Tool::Claude
+            .write_file(&target_dir, "test-bundle", &skill)
+            .unwrap();
+
+        // Check the file was created with correct path
+        // Claude commands use: .claude/commands/{bundle}-{name}.md
+        let expected_path = target_dir.join(".claude/commands/test-bundle-my-cmd.md");
+        assert_eq!(result, expected_path);
+        assert!(expected_path.exists());
+
+        // Commands are copied as-is (no frontmatter transformation)
+        let content = fs::read_to_string(&expected_path).unwrap();
+        assert!(content.contains("# My Command"));
     }
 }

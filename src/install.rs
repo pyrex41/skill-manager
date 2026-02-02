@@ -125,14 +125,14 @@ mod tests {
                 .unwrap();
         }
 
-        // Verify files were created
+        // Verify files were created (commands use {bundle}-{name}.md format)
         assert!(target_dir
             .path()
-            .join(".claude/commands/test-bundle/commit.md")
+            .join(".claude/commands/test-bundle-commit.md")
             .exists());
         assert!(target_dir
             .path()
-            .join(".claude/commands/test-bundle/debug.md")
+            .join(".claude/commands/test-bundle-debug.md")
             .exists());
     }
 

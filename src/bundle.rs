@@ -322,7 +322,7 @@ impl Bundle {
         serde_yaml::from_str(&content).ok()
     }
 
-    /// Scan a subdirectory for .md files (original flat format)
+    /// Scan a subdirectory for .md files (flat format) or {name}/SKILL.md (Agent Skills standard)
     fn scan_type(bundle_path: &PathBuf, skill_type: SkillType) -> anyhow::Result<Vec<SkillFile>> {
         let type_dir = bundle_path.join(skill_type.dir_name());
 
@@ -332,11 +332,20 @@ impl Bundle {
 
         let mut files = vec![];
 
+        // Expected SKILL.md names for Agent Skills standard format
+        let standard_names: &[&str] = match skill_type {
+            SkillType::Skill => &["SKILL.md", "skill.md"],
+            SkillType::Agent => &["AGENT.md", "agent.md"],
+            SkillType::Command => &["COMMAND.md", "command.md"],
+            SkillType::Rule => &["RULE.md", "rule.md"],
+        };
+
         for entry in std::fs::read_dir(&type_dir)? {
             let entry = entry?;
             let path = entry.path();
 
             if path.is_file() && path.extension().is_some_and(|e| e == "md") {
+                // Flat format: skills/name.md
                 let name = path
                     .file_stem()
                     .and_then(|n| n.to_str())
@@ -348,6 +357,32 @@ impl Bundle {
                     path,
                     skill_type,
                 });
+            } else if path.is_dir() {
+                // Agent Skills standard format: skills/name/SKILL.md
+                let folder_name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+
+                // Skip hidden and template directories
+                if folder_name.starts_with('.') || folder_name.starts_with('_') {
+                    continue;
+                }
+
+                // Look for SKILL.md (or equivalent) in the subdirectory
+                for standard_name in standard_names {
+                    let skill_md = path.join(standard_name);
+                    if skill_md.exists() {
+                        // Extract name from frontmatter if present, otherwise use folder name
+                        let name = Self::extract_frontmatter(&skill_md)
+                            .and_then(|fm| fm.name)
+                            .unwrap_or_else(|| folder_name.to_string());
+
+                        files.push(SkillFile {
+                            name,
+                            path: skill_md,
+                            skill_type,
+                        });
+                        break;
+                    }
+                }
             }
         }
 
@@ -688,5 +723,76 @@ mod tests {
         let meta = Bundle::extract_frontmatter(&file);
         assert!(meta.is_some());
         assert_eq!(meta.unwrap().name, None);
+    }
+
+    // Agent Skills standard format within bundles
+    #[test]
+    fn test_bundle_with_agent_skills_format() {
+        let dir = tempdir().unwrap();
+        let bundle_dir = dir.path().join("my-bundle");
+        let skills_dir = bundle_dir.join("skills");
+        let skill_folder = skills_dir.join("interview");
+
+        fs::create_dir_all(&skill_folder).unwrap();
+
+        // Create SKILL.md with frontmatter (Agent Skills standard)
+        fs::write(
+            skill_folder.join("SKILL.md"),
+            "---\nname: interview\ndescription: Interview user for specs\n---\n\n# Interview Skill",
+        )
+        .unwrap();
+
+        let bundle = Bundle::from_path(bundle_dir).unwrap();
+
+        assert_eq!(bundle.name, "my-bundle");
+        assert_eq!(bundle.skills.len(), 1);
+        assert_eq!(bundle.skills[0].name, "interview");
+        assert!(bundle.skills[0].path.ends_with("SKILL.md"));
+    }
+
+    #[test]
+    fn test_bundle_with_agent_skills_format_no_frontmatter() {
+        let dir = tempdir().unwrap();
+        let bundle_dir = dir.path().join("my-bundle");
+        let skills_dir = bundle_dir.join("skills");
+        let skill_folder = skills_dir.join("helper");
+
+        fs::create_dir_all(&skill_folder).unwrap();
+
+        // Create SKILL.md without frontmatter
+        fs::write(skill_folder.join("SKILL.md"), "# Helper Skill\n\nContent").unwrap();
+
+        let bundle = Bundle::from_path(bundle_dir).unwrap();
+
+        assert_eq!(bundle.skills.len(), 1);
+        assert_eq!(bundle.skills[0].name, "helper"); // Falls back to folder name
+    }
+
+    #[test]
+    fn test_bundle_mixed_flat_and_standard_format() {
+        let dir = tempdir().unwrap();
+        let bundle_dir = dir.path().join("mixed-bundle");
+        let skills_dir = bundle_dir.join("skills");
+
+        fs::create_dir_all(&skills_dir).unwrap();
+
+        // Flat format skill
+        fs::write(skills_dir.join("simple.md"), "# Simple skill").unwrap();
+
+        // Agent Skills standard format skill
+        let standard_skill = skills_dir.join("complex");
+        fs::create_dir_all(&standard_skill).unwrap();
+        fs::write(
+            standard_skill.join("SKILL.md"),
+            "---\nname: complex-skill\n---\n\n# Complex",
+        )
+        .unwrap();
+
+        let bundle = Bundle::from_path(bundle_dir).unwrap();
+
+        assert_eq!(bundle.skills.len(), 2);
+        // Sorted alphabetically by name
+        assert_eq!(bundle.skills[0].name, "complex-skill");
+        assert_eq!(bundle.skills[1].name, "simple");
     }
 }

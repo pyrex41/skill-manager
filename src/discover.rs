@@ -400,6 +400,58 @@ fn discover_cursor(base: &Path) -> Result<Vec<InstalledSkill>> {
         }
     }
 
+    // .cursor/agents/*.md -> agents (subagents)
+    let agents_dir = cursor_dir.join("agents");
+    if agents_dir.exists() {
+        for entry in std::fs::read_dir(&agents_dir)? {
+            let entry = entry?;
+            let path = entry.path();
+            if path.is_file() && path.extension().map(|e| e == "md").unwrap_or(false) {
+                let name = path
+                    .file_stem()
+                    .and_then(|s| s.to_str())
+                    .unwrap_or("")
+                    .to_string();
+
+                if !name.is_empty() {
+                    skills.push(InstalledSkill {
+                        name,
+                        skill_type: SkillType::Agent,
+                        tool: InstalledTool::Cursor,
+                        path,
+                        bundle: None,
+                    });
+                }
+            }
+        }
+    }
+
+    // .cursor/commands/*.md -> commands
+    let commands_dir = cursor_dir.join("commands");
+    if commands_dir.exists() {
+        for entry in std::fs::read_dir(&commands_dir)? {
+            let entry = entry?;
+            let path = entry.path();
+            if path.is_file() && path.extension().map(|e| e == "md").unwrap_or(false) {
+                let name = path
+                    .file_stem()
+                    .and_then(|s| s.to_str())
+                    .unwrap_or("")
+                    .to_string();
+
+                if !name.is_empty() {
+                    skills.push(InstalledSkill {
+                        name,
+                        skill_type: SkillType::Command,
+                        tool: InstalledTool::Cursor,
+                        path,
+                        bundle: None,
+                    });
+                }
+            }
+        }
+    }
+
     // .cursor/rules/*/RULE.md -> rules (folder-based)
     let rules_dir = cursor_dir.join("rules");
     if rules_dir.exists() {
@@ -592,6 +644,38 @@ mod tests {
         assert_eq!(skills.len(), 1);
         assert_eq!(skills[0].name, "test");
         assert_eq!(skills[0].skill_type, SkillType::Rule);
+        assert_eq!(skills[0].tool, InstalledTool::Cursor);
+    }
+
+    #[test]
+    fn test_discover_cursor_agents() {
+        let dir = tempdir().unwrap();
+
+        // Create .cursor/agents/my-agent.md
+        let agents_dir = dir.path().join(".cursor/agents");
+        fs::create_dir_all(&agents_dir).unwrap();
+        fs::write(agents_dir.join("my-agent.md"), "# My Agent").unwrap();
+
+        let skills = discover_installed(dir.path()).unwrap();
+        assert_eq!(skills.len(), 1);
+        assert_eq!(skills[0].name, "my-agent");
+        assert_eq!(skills[0].skill_type, SkillType::Agent);
+        assert_eq!(skills[0].tool, InstalledTool::Cursor);
+    }
+
+    #[test]
+    fn test_discover_cursor_commands() {
+        let dir = tempdir().unwrap();
+
+        // Create .cursor/commands/my-command.md
+        let commands_dir = dir.path().join(".cursor/commands");
+        fs::create_dir_all(&commands_dir).unwrap();
+        fs::write(commands_dir.join("my-command.md"), "# My Command").unwrap();
+
+        let skills = discover_installed(dir.path()).unwrap();
+        assert_eq!(skills.len(), 1);
+        assert_eq!(skills[0].name, "my-command");
+        assert_eq!(skills[0].skill_type, SkillType::Command);
         assert_eq!(skills[0].tool, InstalledTool::Cursor);
     }
 

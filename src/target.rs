@@ -76,7 +76,9 @@ impl Tool {
             },
             Tool::Cursor => match skill_type {
                 SkillType::Skill => format!(".cursor/skills/{}-*/", bundle_name),
-                _ => format!(".cursor/rules/{}-*/", bundle_name),
+                SkillType::Agent => format!(".cursor/agents/{}-*.md", bundle_name),
+                SkillType::Command => format!(".cursor/commands/{}-*.md", bundle_name),
+                SkillType::Rule => format!(".cursor/rules/{}-*/", bundle_name),
             },
         }
     }
@@ -177,9 +179,10 @@ impl Tool {
     }
 
     // Cursor:
-    //   skills -> .cursor/skills/{bundle}-{name}/SKILL.md
-    //   agents/commands/rules -> .cursor/rules/{bundle}-{name}/RULE.md (folder-based)
-    // Phase 3: use transform_cursor_rule for non-skill types
+    //   skills -> .cursor/skills/{bundle}-{name}/SKILL.md (folder-based with frontmatter)
+    //   agents -> .cursor/agents/{bundle}-{name}.md (flat file, subagents)
+    //   commands -> .cursor/commands/{bundle}-{name}.md (flat file)
+    //   rules -> .cursor/rules/{bundle}-{name}/RULE.md (folder-based)
     fn write_cursor(
         &self,
         target_dir: &PathBuf,
@@ -201,8 +204,28 @@ impl Tool {
 
                 Ok(dest_file)
             }
-            _ => {
-                // Agents, commands, and rules use .cursor/rules/ with RULE.md
+            SkillType::Agent => {
+                // Agents (subagents) use .cursor/agents/ as flat files
+                let dest_dir = target_dir.join(".cursor/agents");
+                fs::create_dir_all(&dest_dir)?;
+
+                let dest_file = dest_dir.join(format!("{}.md", combined_name));
+                transform_cursor_agent(&skill.path, &dest_file, &combined_name)?;
+
+                Ok(dest_file)
+            }
+            SkillType::Command => {
+                // Commands use .cursor/commands/ as flat files
+                let dest_dir = target_dir.join(".cursor/commands");
+                fs::create_dir_all(&dest_dir)?;
+
+                let dest_file = dest_dir.join(format!("{}.md", combined_name));
+                fs::copy(&skill.path, &dest_file)?;
+
+                Ok(dest_file)
+            }
+            SkillType::Rule => {
+                // Rules use .cursor/rules/ with RULE.md (folder-based)
                 let dest_dir = target_dir.join(".cursor/rules").join(&combined_name);
                 fs::create_dir_all(&dest_dir)?;
 
@@ -658,6 +681,84 @@ fn transform_cursor_rule(src: &PathBuf, dest: &PathBuf, _skill_name: &str) -> Re
         result.push_str("---\n");
         result.push_str(&format!("description: \"{}\"\n", desc));
         result.push_str("alwaysApply: false\n");
+        result.push_str("---\n");
+        result.push_str(&content);
+        result
+    };
+
+    let mut file = fs::File::create(dest)?;
+    file.write_all(output.as_bytes())?;
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Cursor agent (subagent) transformation
+// ---------------------------------------------------------------------------
+
+/// Transform an agent file for Cursor subagent format.
+/// Cursor subagents use YAML frontmatter with name and description fields.
+fn transform_cursor_agent(src: &PathBuf, dest: &PathBuf, skill_name: &str) -> Result<()> {
+    let content = fs::read_to_string(src)?;
+    let lines: Vec<&str> = content.lines().collect();
+
+    let output = if lines.first() == Some(&"---") {
+        // Has frontmatter — check what fields exist
+        let mut has_name = false;
+        let mut has_description = false;
+        let mut in_fm = false;
+        let mut fm_end = 0;
+
+        for (i, line) in lines.iter().enumerate() {
+            if *line == "---" {
+                if in_fm { fm_end = i; break; }
+                in_fm = true;
+                continue;
+            }
+            if in_fm {
+                if line.starts_with("name:") { has_name = true; }
+                if line.starts_with("description:") { has_description = true; }
+            }
+        }
+
+        if has_name && has_description {
+            content
+        } else {
+            let mut result = String::new();
+            result.push_str("---\n");
+
+            if !has_name {
+                result.push_str(&format!("name: {}\n", skill_name));
+            }
+
+            // Copy existing frontmatter lines (skip tools: field which isn't used by Cursor)
+            for line in lines.iter().skip(1).take(fm_end - 1) {
+                // Skip Claude-specific tools field
+                if line.trim().starts_with("tools:") && line.contains(",") {
+                    continue;
+                }
+                result.push_str(line);
+                result.push('\n');
+            }
+
+            if !has_description {
+                let desc = extract_description_from_body(&lines, fm_end + 1);
+                result.push_str(&format!("description: \"{}\"\n", desc));
+            }
+
+            // Closing --- and body
+            for line in lines.iter().skip(fm_end) {
+                result.push_str(line);
+                result.push('\n');
+            }
+            result
+        }
+    } else {
+        // No frontmatter — create with Cursor subagent fields
+        let desc = extract_description_from_body(&lines, 0);
+        let mut result = String::new();
+        result.push_str("---\n");
+        result.push_str(&format!("name: {}\n", skill_name));
+        result.push_str(&format!("description: \"{}\"\n", desc));
         result.push_str("---\n");
         result.push_str(&content);
         result
@@ -1184,11 +1285,11 @@ This is the agent content.
     }
 
     #[test]
-    fn test_cursor_rule_agent_gets_rule_frontmatter() {
+    fn test_cursor_agent_goes_to_agents_dir() {
         let temp_dir = tempdir().unwrap();
         let target_dir = temp_dir.path().to_path_buf();
 
-        // An agent file installed to Cursor goes to .cursor/rules/
+        // An agent file installed to Cursor goes to .cursor/agents/
         let src_content = "---\nname: my-agent\ntools: Read, Grep\n---\nAgent instructions.";
         let src_path = temp_dir.path().join("source.md");
         fs::write(&src_path, src_content).unwrap();
@@ -1201,11 +1302,45 @@ This is the agent content.
         };
 
         let result = Tool::Cursor.write_file(&target_dir, "tb", &skill).unwrap();
-        let content = fs::read_to_string(&result).unwrap();
+        
+        // Should be in .cursor/agents/ as a flat file
+        let expected_path = target_dir.join(".cursor/agents/tb-my-agent.md");
+        assert_eq!(result, expected_path);
+        assert!(expected_path.exists());
 
-        // Should have Cursor rule frontmatter added
-        assert!(content.contains("alwaysApply: false"));
+        let content = fs::read_to_string(&result).unwrap();
+        // Should have name and description in frontmatter
+        assert!(content.contains("name:"));
         assert!(content.contains("description:"));
+        // Should NOT have tools field (Claude-specific)
+        assert!(!content.contains("tools: Read"));
+    }
+
+    #[test]
+    fn test_cursor_command_goes_to_commands_dir() {
+        let temp_dir = tempdir().unwrap();
+        let target_dir = temp_dir.path().to_path_buf();
+
+        let src_content = "# My Command\n\nDo something useful.";
+        let src_path = temp_dir.path().join("source.md");
+        fs::write(&src_path, src_content).unwrap();
+
+        let skill = SkillFile {
+            name: "my-command".to_string(),
+            path: src_path,
+            skill_type: SkillType::Command,
+            source_dir: None,
+        };
+
+        let result = Tool::Cursor.write_file(&target_dir, "tb", &skill).unwrap();
+        
+        // Should be in .cursor/commands/ as a flat file
+        let expected_path = target_dir.join(".cursor/commands/tb-my-command.md");
+        assert_eq!(result, expected_path);
+        assert!(expected_path.exists());
+
+        let content = fs::read_to_string(&expected_path).unwrap();
+        assert!(content.contains("# My Command"));
     }
 
     // ---- Integration: write_file for agents ----

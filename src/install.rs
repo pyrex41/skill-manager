@@ -290,30 +290,43 @@ mod tests {
 
         let bundle = crate::bundle::Bundle::from_path(source_path.join("test-bundle")).unwrap();
 
-        // Test skill (should go to skills beta directory)
+        // Test skill (should go to skills directory)
         for skill in &bundle.skills {
             Tool::Cursor
                 .write_file(&target_dir.path().to_path_buf(), "test-bundle", skill)
                 .unwrap();
         }
 
-        // Verify skills folder-based structure (beta)
+        // Verify skills folder-based structure
         assert!(target_dir
             .path()
             .join(".cursor/skills/test-bundle-helper/SKILL.md")
             .exists());
 
-        // Test agent (should go to rules folder-based structure)
+        // Test agent (should go to agents directory as flat file)
         for agent in &bundle.agents {
             Tool::Cursor
                 .write_file(&target_dir.path().to_path_buf(), "test-bundle", agent)
                 .unwrap();
         }
 
-        // Verify rules folder-based structure
+        // Verify agents flat file structure (subagents)
         assert!(target_dir
             .path()
-            .join(".cursor/rules/test-bundle-analyzer/RULE.md")
+            .join(".cursor/agents/test-bundle-analyzer.md")
+            .exists());
+
+        // Test command (should go to commands directory as flat file)
+        for command in &bundle.commands {
+            Tool::Cursor
+                .write_file(&target_dir.path().to_path_buf(), "test-bundle", command)
+                .unwrap();
+        }
+
+        // Verify commands flat file structure
+        assert!(target_dir
+            .path()
+            .join(".cursor/commands/test-bundle-commit.md")
             .exists());
     }
 }

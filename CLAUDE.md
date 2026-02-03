@@ -41,14 +41,14 @@ This is a Rust CLI tool for managing AI coding assistant skills across Claude, O
 
 | Type | Claude | OpenCode | Cursor |
 |------|--------|----------|--------|
-| Skills | `.claude/skills/{bundle}-{name}/SKILL.md` | `.opencode/skill/{bundle}-{name}/SKILL.md` | `.cursor/skills/{bundle}-{name}/SKILL.md` (beta) |
-| Agents | `.claude/agents/{bundle}-{name}.md` | `.opencode/agent/{bundle}-{name}.md` | `.cursor/rules/{bundle}-{name}/RULE.md` |
-| Commands | `.claude/commands/{bundle}-{name}.md` | `.opencode/command/{bundle}-{name}.md` | `.cursor/rules/{bundle}-{name}/RULE.md` |
-| Rules | `.claude/rules/{bundle}-{name}.md` | `.opencode/rule/{bundle}-{name}/RULE.md` | `.cursor/rules/{bundle}-{name}/RULE.md` |
+| Skills | `.claude/skills/{bundle}/{name}.md` | `.opencode/skill/{bundle}-{name}/SKILL.md` | `.cursor/skills/{bundle}-{name}/SKILL.md` |
+| Agents | `.claude/agents/{bundle}/{name}.md` | `.opencode/agent/{bundle}-{name}.md` | `.cursor/agents/{bundle}-{name}.md` |
+| Commands | `.claude/commands/{bundle}/{name}.md` | `.opencode/command/{bundle}-{name}.md` | `.cursor/commands/{bundle}-{name}.md` |
+| Rules | `.claude/rules/{bundle}/{name}.md` | `.opencode/rule/{bundle}-{name}/RULE.md` | `.cursor/rules/{bundle}-{name}/RULE.md` |
 
-Skills require directory-based format with `SKILL.md` as the entrypoint and YAML frontmatter containing `name` and `description` fields. `target.rs:transform_skill_file()` adds this automatically for all tools.
+Skills require directory-based format with `SKILL.md` as the entrypoint and YAML frontmatter containing `name` and `description` fields. `target.rs:transform_skill_file()` adds this automatically for OpenCode and Cursor.
 
-**Cursor Support**: Cursor supports both folder-based skills (beta, `.cursor/skills/`) and rules (`.cursor/rules/`). Skills are installed to the beta skills directory, while agents, commands, and rules go to the rules directory.
+**Cursor Support**: Cursor now has full support for skills (`.cursor/skills/`), subagents (`.cursor/agents/`), commands (`.cursor/commands/`), and rules (`.cursor/rules/`). Skills and rules use folder-based format with `SKILL.md`/`RULE.md`, while agents and commands are flat markdown files.
 
 ### Key Dependencies
 

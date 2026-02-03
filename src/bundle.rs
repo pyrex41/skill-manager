@@ -326,7 +326,8 @@ impl Bundle {
         serde_yaml::from_str(&content).ok()
     }
 
-    /// Scan a subdirectory for .md files (original flat format)
+    /// Scan a subdirectory for skill files.
+    /// Handles BOTH flat .md files AND {name}/SKILL.md directory format.
     fn scan_type(bundle_path: &PathBuf, skill_type: SkillType) -> anyhow::Result<Vec<SkillFile>> {
         let type_dir = bundle_path.join(skill_type.dir_name());
 
@@ -341,6 +342,7 @@ impl Bundle {
             let path = entry.path();
 
             if path.is_file() && path.extension().is_some_and(|e| e == "md") {
+                // Flat .md file (e.g., commands/commit.md)
                 let name = path
                     .file_stem()
                     .and_then(|n| n.to_str())
@@ -353,6 +355,59 @@ impl Bundle {
                     skill_type,
                     source_dir: None,
                 });
+            } else if path.is_dir() {
+                // Directory format: look for SKILL.md, AGENT.md, etc.
+                let expected_names = match skill_type {
+                    SkillType::Skill => vec!["SKILL.md", "skill.md"],
+                    SkillType::Agent => vec!["AGENT.md", "agent.md"],
+                    SkillType::Command => vec!["COMMAND.md", "command.md"],
+                    SkillType::Rule => vec!["RULE.md", "rule.md"],
+                };
+
+                let mut found = false;
+                for expected in &expected_names {
+                    let md_path = path.join(expected);
+                    if md_path.exists() {
+                        let folder_name = path
+                            .file_name()
+                            .and_then(|n| n.to_str())
+                            .unwrap_or("")
+                            .to_string();
+                        files.push(SkillFile {
+                            name: folder_name,
+                            path: md_path,
+                            skill_type,
+                            source_dir: Some(path.clone()),
+                        });
+                        found = true;
+                        break;
+                    }
+                }
+
+                // Fall back to any .md file in the directory
+                if !found {
+                    if let Ok(entries) = std::fs::read_dir(&path) {
+                        for sub_entry in entries.flatten() {
+                            let sub_path = sub_entry.path();
+                            if sub_path.is_file()
+                                && sub_path.extension().is_some_and(|e| e == "md")
+                            {
+                                let folder_name = path
+                                    .file_name()
+                                    .and_then(|n| n.to_str())
+                                    .unwrap_or("")
+                                    .to_string();
+                                files.push(SkillFile {
+                                    name: folder_name,
+                                    path: sub_path,
+                                    skill_type,
+                                    source_dir: Some(path.clone()),
+                                });
+                                break;
+                            }
+                        }
+                    }
+                }
             }
         }
 

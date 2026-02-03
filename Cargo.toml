@@ -1,6 +1,6 @@
 [package]
 name = "skill-manager"
-version = "0.6.4"
+version = "0.6.5"
 edition = "2021"
 description = "Manage AI coding tool skills for Claude, OpenCode, and Cursor"
 license = "MIT"

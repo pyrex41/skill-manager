@@ -98,8 +98,12 @@ enum Commands {
         #[arg(short = 'y', long)]
         yes: bool,
     },
-    /// Update git sources to latest
-    Update,
+    /// Update git sources and refresh installed skills
+    Update {
+        /// Only update git sources, don't refresh skills
+        #[arg(long)]
+        sources_only: bool,
+    },
     /// Generate shell completions
     Completions {
         /// Shell to generate completions for
@@ -241,8 +245,11 @@ fn main() -> Result<()> {
                 show_installed_skills(&target_dir, filter_tool.as_deref())?;
             }
         }
-        Some(Commands::Update) => {
+        Some(Commands::Update { sources_only }) => {
             update_sources(&config)?;
+            if !sources_only {
+                refresh_installed_skills(&config, &tool, &target_dir, &types)?;
+            }
         }
         Some(Commands::Completions { shell }) => {
             generate_completions(shell);
@@ -755,6 +762,110 @@ fn update_sources(config: &Config) -> Result<()> {
     }
     if errors > 0 {
         println!("  {} {} source(s) failed", "".red(), errors);
+    }
+
+    Ok(())
+}
+
+fn refresh_installed_skills(
+    config: &Config,
+    tool: &Tool,
+    target_dir: &PathBuf,
+    types: &[SkillType],
+) -> Result<()> {
+    use crate::discover::{discover_installed, filter_by_tool};
+    use std::collections::HashSet;
+
+    // Discover installed skills for this tool
+    let tool_name = match tool {
+        Tool::Claude => "claude",
+        Tool::OpenCode => "opencode",
+        Tool::Cursor => "cursor",
+    };
+    let skills = filter_by_tool(discover_installed(target_dir)?, tool_name);
+
+    if skills.is_empty() {
+        println!();
+        println!("{}", "No installed skills to refresh.".yellow());
+        return Ok(());
+    }
+
+    // Collect unique bundle names
+    let mut bundles_to_refresh: HashSet<String> = HashSet::new();
+    for skill in &skills {
+        if let Some(ref bundle) = skill.bundle {
+            bundles_to_refresh.insert(bundle.clone());
+        } else {
+            // For skills without bundle, use the skill name as bundle name
+            bundles_to_refresh.insert(skill.name.clone());
+        }
+    }
+
+    if bundles_to_refresh.is_empty() {
+        println!();
+        println!("{}", "No bundles to refresh.".yellow());
+        return Ok(());
+    }
+
+    println!();
+    println!("{}", "Refreshing installed skills...".bold());
+    println!();
+
+    let mut refreshed = 0;
+    let mut not_found = 0;
+    let mut errors = 0;
+
+    for bundle_name in bundles_to_refresh {
+        print!("  {} {}... ", "Refreshing".cyan(), bundle_name);
+
+        // Try to find this bundle in sources
+        match config.find_bundle(&bundle_name) {
+            Ok(Some((_source, bundle))) => {
+                // Re-install this bundle
+                let mut count = 0;
+                for skill_type in types {
+                    let files = bundle.files_of_type(*skill_type);
+                    for file in files {
+                        match tool.write_file(target_dir, &bundle.name, file) {
+                            Ok(_) => count += 1,
+                            Err(e) => {
+                                println!("{}: {}", "error".red(), e);
+                                errors += 1;
+                            }
+                        }
+                    }
+                }
+                if count > 0 {
+                    println!("{} ({} files)", "done".green(), count);
+                    refreshed += 1;
+                } else {
+                    println!("{}", "no files".dimmed());
+                }
+            }
+            Ok(None) => {
+                println!("{}", "not found in sources".yellow());
+                not_found += 1;
+            }
+            Err(e) => {
+                println!("{}: {}", "error".red(), e);
+                errors += 1;
+            }
+        }
+    }
+
+    println!();
+    if refreshed > 0 {
+        println!("  {} {} bundle(s) refreshed", "✓".green(), refreshed);
+    }
+    if not_found > 0 {
+        println!(
+            "  {} {} bundle(s) not found in sources",
+            "⚠".yellow(),
+            not_found
+        );
+    }
+    if errors > 0 {
+        println!("  {} {} error(s)", "✗".red(), errors);
     }
 
     Ok(())

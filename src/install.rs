@@ -4,6 +4,7 @@ use std::path::PathBuf;
 
 use crate::bundle::SkillType;
 use crate::config::Config;
+use crate::source::Source;
 use crate::target::Tool;
 
 /// Install a bundle to the target directory
@@ -33,6 +34,119 @@ pub fn install_bundle(
             } else {
                 available.join(", ")
             }
+        )
+    })?;
+
+    println!(
+        "Importing from {} to {}...",
+        bundle_name.cyan(),
+        tool.name()
+    );
+
+    let mut total_count = 0;
+
+    for skill_type in types {
+        let files = bundle.files_of_type(*skill_type);
+
+        if files.is_empty() {
+            continue;
+        }
+
+        let mut count = 0;
+
+        for file in files {
+            tool.write_file(target_dir, &bundle.name, file)?;
+            count += 1;
+        }
+
+        if count > 0 {
+            let dest_info = tool.dest_info(*skill_type, &bundle.name);
+            println!(
+                "  {}: {} files -> {}",
+                skill_type.dir_name(),
+                count,
+                dest_info.dimmed()
+            );
+            total_count += count;
+        }
+    }
+
+    if total_count == 0 {
+        println!("{}", "No files to import.".yellow());
+    } else {
+        println!("{}", "Done!".green());
+    }
+
+    Ok(())
+}
+
+/// Install all bundles from a named source
+pub fn install_from_source(
+    source: &dyn Source,
+    tool: &Tool,
+    target_dir: &PathBuf,
+    types: &[SkillType],
+) -> Result<()> {
+    let bundles = source.list_bundles()?;
+
+    if bundles.is_empty() {
+        println!("{}", "No bundles found in source.".yellow());
+        return Ok(());
+    }
+
+    println!(
+        "Installing {} bundle(s) from {} to {}...",
+        bundles.len(),
+        source.display_path().cyan(),
+        tool.name()
+    );
+    println!();
+
+    let mut total_files = 0;
+
+    for bundle in bundles {
+        let mut bundle_files = 0;
+
+        for skill_type in types {
+            let files = bundle.files_of_type(*skill_type);
+
+            for file in files {
+                tool.write_file(target_dir, &bundle.name, file)?;
+                bundle_files += 1;
+            }
+        }
+
+        if bundle_files > 0 {
+            println!("  {} {} file(s)", bundle.name.cyan(), bundle_files);
+            total_files += bundle_files;
+        }
+    }
+
+    if total_files == 0 {
+        println!("{}", "No files to import.".yellow());
+    } else {
+        println!();
+        println!("{} {} file(s) installed.", "Done!".green(), total_files);
+    }
+
+    Ok(())
+}
+
+/// Install a specific bundle from a specific source
+pub fn install_bundle_from_source(
+    source: &dyn Source,
+    bundle_name: &str,
+    tool: &Tool,
+    target_dir: &PathBuf,
+    types: &[SkillType],
+) -> Result<()> {
+    let bundles = source.list_bundles()?;
+
+    let bundle = bundles.into_iter().find(|b| b.name == bundle_name).ok_or_else(|| {
+        anyhow::anyhow!(
+            "Bundle '{}' not found in source '{}'",
+            bundle_name,
+            source.display_path()
         )
     })?;
 

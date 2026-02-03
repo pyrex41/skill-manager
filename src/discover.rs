@@ -88,10 +88,11 @@ fn discover_claude(base: &Path) -> Result<Vec<InstalledSkill>> {
         return Ok(skills);
     }
 
-    // .claude/commands/**/*.md -> commands
+    // .claude/commands/{bundle}/*.md -> commands (max depth 2: bundle + file)
     let commands_dir = claude_dir.join("commands");
     if commands_dir.exists() {
         for entry in WalkDir::new(&commands_dir)
+            .max_depth(2)
             .into_iter()
             .filter_map(|e| e.ok())
             .filter(|e| e.file_type().is_file())
@@ -125,10 +126,11 @@ fn discover_claude(base: &Path) -> Result<Vec<InstalledSkill>> {
         }
     }
 
-    // .claude/agents/**/*.md -> agents
+    // .claude/agents/{bundle}/*.md -> agents (max depth 2: bundle + file)
     let agents_dir = claude_dir.join("agents");
     if agents_dir.exists() {
         for entry in WalkDir::new(&agents_dir)
+            .max_depth(2)
             .into_iter()
             .filter_map(|e| e.ok())
             .filter(|e| e.file_type().is_file())
@@ -161,10 +163,11 @@ fn discover_claude(base: &Path) -> Result<Vec<InstalledSkill>> {
         }
     }
 
-    // .claude/skills/**/*.md -> skills
+    // .claude/skills/{bundle}/*.md -> skills (max depth 2: bundle + file)
     let skills_dir = claude_dir.join("skills");
     if skills_dir.exists() {
         for entry in WalkDir::new(&skills_dir)
+            .max_depth(2)
             .into_iter()
             .filter_map(|e| e.ok())
             .filter(|e| e.file_type().is_file())
@@ -197,10 +200,11 @@ fn discover_claude(base: &Path) -> Result<Vec<InstalledSkill>> {
         }
     }
 
-    // .claude/rules/**/*.md -> rules
+    // .claude/rules/{bundle}/*.md -> rules (max depth 2: bundle + file)
     let rules_dir = claude_dir.join("rules");
     if rules_dir.exists() {
         for entry in WalkDir::new(&rules_dir)
+            .max_depth(2)
             .into_iter()
             .filter_map(|e| e.ok())
             .filter(|e| e.file_type().is_file())

@@ -134,11 +134,11 @@ enum SourcesAction {
     List,
     /// Add a source (local path or git URL)
     Add {
-        /// Optional name for the source (e.g., "fg")
-        #[arg(value_name = "NAME")]
-        name: Option<String>,
         /// Path or URL to add
         path: String,
+        /// Optional name for the source (e.g., "fg")
+        #[arg(short = 'n', long = "name")]
+        name: Option<String>,
     },
     /// Remove a source
     Remove {
@@ -216,7 +216,7 @@ fn main() -> Result<()> {
             Some(SourcesAction::List) => {
                 sources_list(&config)?;
             }
-            Some(SourcesAction::Add { name, path }) => {
+            Some(SourcesAction::Add { path, name }) => {
                 sources_add(name, path)?;
             }
             Some(SourcesAction::Remove { path }) => {

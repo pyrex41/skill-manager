@@ -22,7 +22,7 @@ use crate::target::Tool;
 
 #[derive(Parser)]
 #[command(name = "skm")]
-#[command(about = "Manage AI coding tool skills for Claude, OpenCode, and Cursor")]
+#[command(about = "Manage AI coding tool skills for Claude, OpenCode, Cursor, and Codex")]
 #[command(version)]
 #[command(args_conflicts_with_subcommands = true)]
 struct Cli {
@@ -40,6 +40,10 @@ struct Cli {
     /// Install to Cursor instead of Claude
     #[arg(short = 'c', long = "cursor", global = true)]
     cursor: bool,
+
+    /// Install to Codex instead of Claude
+    #[arg(short = 'x', long = "codex", global = true)]
+    codex: bool,
 
     /// Install globally (tool-specific location)
     #[arg(short = 'g', long = "global", global = true)]
@@ -168,6 +172,8 @@ fn main() -> Result<()> {
         Tool::Cursor
     } else if cli.opencode {
         Tool::OpenCode
+    } else if cli.codex {
+        Tool::Codex
     } else {
         Tool::Claude
     };
@@ -781,6 +787,7 @@ fn refresh_installed_skills(
         Tool::Claude => "claude",
         Tool::OpenCode => "opencode",
         Tool::Cursor => "cursor",
+        Tool::Codex => "codex",
     };
     let skills = filter_by_tool(discover_installed(target_dir)?, tool_name);
 
@@ -986,6 +993,7 @@ fn show_installed_skills(base: &PathBuf, filter_tool: Option<&str>) -> Result<()
         InstalledTool::Claude,
         InstalledTool::OpenCode,
         InstalledTool::Cursor,
+        InstalledTool::Codex,
     ];
 
     for tool in &tool_order {
@@ -1287,6 +1295,7 @@ fn remove_bundle(
         InstalledTool::Claude,
         InstalledTool::OpenCode,
         InstalledTool::Cursor,
+        InstalledTool::Codex,
     ];
     let type_order = [SkillType::Skill, SkillType::Agent, SkillType::Command, SkillType::Rule];
 

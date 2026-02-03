@@ -1,11 +1,11 @@
 [package]
 name = "skill-manager"
-version = "0.7.0"
+version = "0.8.0"
 edition = "2021"
-description = "Manage AI coding tool skills for Claude, OpenCode, and Cursor"
+description = "Manage AI coding tool skills for Claude, OpenCode, Cursor, and Codex"
 license = "MIT"
 repository = "https://github.com/pyrex41/skill-manager"
-keywords = ["cli", "ai", "claude", "cursor", "skills"]
+keywords = ["cli", "ai", "claude", "cursor", "codex"]
 categories = ["command-line-utilities", "development-tools"]
 readme = "README.md"
 

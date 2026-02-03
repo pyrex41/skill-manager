@@ -24,6 +24,7 @@ pub enum InstalledTool {
     Claude,
     OpenCode,
     Cursor,
+    Codex,
 }
 
 impl InstalledTool {
@@ -32,6 +33,7 @@ impl InstalledTool {
             InstalledTool::Claude => "claude",
             InstalledTool::OpenCode => "opencode",
             InstalledTool::Cursor => "cursor",
+            InstalledTool::Codex => "codex",
         }
     }
 
@@ -40,6 +42,7 @@ impl InstalledTool {
             InstalledTool::Claude => "Claude",
             InstalledTool::OpenCode => "OpenCode",
             InstalledTool::Cursor => "Cursor",
+            InstalledTool::Codex => "Codex",
         }
     }
 }
@@ -75,6 +78,9 @@ pub fn discover_installed(base: &Path) -> Result<Vec<InstalledSkill>> {
 
     // Discover Cursor skills
     skills.extend(discover_cursor(base)?);
+
+    // Discover Codex skills
+    skills.extend(discover_codex(base)?);
 
     Ok(skills)
 }
@@ -163,76 +169,60 @@ fn discover_claude(base: &Path) -> Result<Vec<InstalledSkill>> {
         }
     }
 
-    // .claude/skills/{bundle}/*.md -> skills (max depth 2: bundle + file)
+    // .claude/skills/*/SKILL.md -> skills (folder-based format)
     let skills_dir = claude_dir.join("skills");
     if skills_dir.exists() {
-        for entry in WalkDir::new(&skills_dir)
-            .max_depth(2)
-            .into_iter()
-            .filter_map(|e| e.ok())
-            .filter(|e| e.file_type().is_file())
-            .filter(|e| e.path().extension().map(|ext| ext == "md").unwrap_or(false))
-        {
-            let path = entry.path().to_path_buf();
-            let name = path
-                .file_stem()
-                .and_then(|s| s.to_str())
-                .unwrap_or("")
-                .to_string();
+        for entry in std::fs::read_dir(&skills_dir)? {
+            let entry = entry?;
+            let path = entry.path();
+            if path.is_dir() {
+                let skill_file = path.join("SKILL.md");
+                if skill_file.exists() {
+                    let name = path
+                        .file_name()
+                        .and_then(|s| s.to_str())
+                        .unwrap_or("")
+                        .to_string();
 
-            let bundle = path.parent().and_then(|p| {
-                if p != skills_dir {
-                    p.file_name().and_then(|n| n.to_str()).map(String::from)
-                } else {
-                    None
+                    if !name.is_empty() {
+                        skills.push(InstalledSkill {
+                            name: name.clone(),
+                            skill_type: SkillType::Skill,
+                            tool: InstalledTool::Claude,
+                            path: skill_file,
+                            bundle: Some(name),
+                        });
+                    }
                 }
-            });
-
-            if !name.is_empty() {
-                skills.push(InstalledSkill {
-                    name,
-                    skill_type: SkillType::Skill,
-                    tool: InstalledTool::Claude,
-                    path,
-                    bundle,
-                });
             }
         }
     }
 
-    // .claude/rules/{bundle}/*.md -> rules (max depth 2: bundle + file)
+    // .claude/rules/*/RULE.md -> rules (folder-based format)
     let rules_dir = claude_dir.join("rules");
     if rules_dir.exists() {
-        for entry in WalkDir::new(&rules_dir)
-            .max_depth(2)
-            .into_iter()
-            .filter_map(|e| e.ok())
-            .filter(|e| e.file_type().is_file())
-            .filter(|e| e.path().extension().map(|ext| ext == "md").unwrap_or(false))
-        {
-            let path = entry.path().to_path_buf();
-            let name = path
-                .file_stem()
-                .and_then(|s| s.to_str())
-                .unwrap_or("")
-                .to_string();
+        for entry in std::fs::read_dir(&rules_dir)? {
+            let entry = entry?;
+            let path = entry.path();
+            if path.is_dir() {
+                let rule_file = path.join("RULE.md");
+                if rule_file.exists() {
+                    let name = path
+                        .file_name()
+                        .and_then(|s| s.to_str())
+                        .unwrap_or("")
+                        .to_string();
 
-            let bundle = path.parent().and_then(|p| {
-                if p != rules_dir {
-                    p.file_name().and_then(|n| n.to_str()).map(String::from)
-                } else {
-                    None
+                    if !name.is_empty() {
+                        skills.push(InstalledSkill {
+                            name: name.clone(),
+                            skill_type: SkillType::Rule,
+                            tool: InstalledTool::Claude,
+                            path: rule_file,
+                            bundle: Some(name),
+                        });
+                    }
                 }
-            });
-
-            if !name.is_empty() {
-                skills.push(InstalledSkill {
-                    name,
-                    skill_type: SkillType::Rule,
-                    tool: InstalledTool::Claude,
-                    path,
-                    bundle,
-                });
             }
         }
     }
@@ -249,8 +239,8 @@ fn discover_opencode(base: &Path) -> Result<Vec<InstalledSkill>> {
         return Ok(skills);
     }
 
-    // .opencode/skill/*/SKILL.md -> skills
-    let skill_dir = opencode_dir.join("skill");
+    // .opencode/skills/*/SKILL.md -> skills
+    let skill_dir = opencode_dir.join("skills");
     if skill_dir.exists() {
         for entry in std::fs::read_dir(&skill_dir)? {
             let entry = entry?;
@@ -278,8 +268,8 @@ fn discover_opencode(base: &Path) -> Result<Vec<InstalledSkill>> {
         }
     }
 
-    // .opencode/agent/*.md -> agents
-    let agent_dir = opencode_dir.join("agent");
+    // .opencode/agents/*.md -> agents
+    let agent_dir = opencode_dir.join("agents");
     if agent_dir.exists() {
         for entry in std::fs::read_dir(&agent_dir)? {
             let entry = entry?;
@@ -304,8 +294,8 @@ fn discover_opencode(base: &Path) -> Result<Vec<InstalledSkill>> {
         }
     }
 
-    // .opencode/command/*.md -> commands
-    let command_dir = opencode_dir.join("command");
+    // .opencode/commands/*.md -> commands
+    let command_dir = opencode_dir.join("commands");
     if command_dir.exists() {
         for entry in std::fs::read_dir(&command_dir)? {
             let entry = entry?;
@@ -330,8 +320,8 @@ fn discover_opencode(base: &Path) -> Result<Vec<InstalledSkill>> {
         }
     }
 
-    // .opencode/rule/*/RULE.md -> rules
-    let rule_dir = opencode_dir.join("rule");
+    // .opencode/rules/*/RULE.md -> rules
+    let rule_dir = opencode_dir.join("rules");
     if rule_dir.exists() {
         for entry in std::fs::read_dir(&rule_dir)? {
             let entry = entry?;
@@ -484,6 +474,128 @@ fn discover_cursor(base: &Path) -> Result<Vec<InstalledSkill>> {
     Ok(skills)
 }
 
+/// Discover Codex installed skills
+fn discover_codex(base: &Path) -> Result<Vec<InstalledSkill>> {
+    let mut skills = Vec::new();
+    let codex_dir = base.join(".codex");
+
+    if !codex_dir.exists() {
+        return Ok(skills);
+    }
+
+    // .codex/skills/*/SKILL.md -> skills
+    let skills_dir = codex_dir.join("skills");
+    if skills_dir.exists() {
+        for entry in std::fs::read_dir(&skills_dir)? {
+            let entry = entry?;
+            let path = entry.path();
+            if path.is_dir() {
+                let skill_file = path.join("SKILL.md");
+                if skill_file.exists() {
+                    let name = path
+                        .file_name()
+                        .and_then(|s| s.to_str())
+                        .unwrap_or("")
+                        .to_string();
+
+                    if !name.is_empty() {
+                        skills.push(InstalledSkill {
+                            name: name.clone(),
+                            skill_type: SkillType::Skill,
+                            tool: InstalledTool::Codex,
+                            path: skill_file,
+                            bundle: Some(name),
+                        });
+                    }
+                }
+            }
+        }
+    }
+
+    // .codex/agents/*.md -> agents
+    let agents_dir = codex_dir.join("agents");
+    if agents_dir.exists() {
+        for entry in std::fs::read_dir(&agents_dir)? {
+            let entry = entry?;
+            let path = entry.path();
+            if path.is_file() && path.extension().map(|e| e == "md").unwrap_or(false) {
+                let name = path
+                    .file_stem()
+                    .and_then(|s| s.to_str())
+                    .unwrap_or("")
+                    .to_string();
+
+                if !name.is_empty() {
+                    skills.push(InstalledSkill {
+                        name,
+                        skill_type: SkillType::Agent,
+                        tool: InstalledTool::Codex,
+                        path,
+                        bundle: None,
+                    });
+                }
+            }
+        }
+    }
+
+    // .codex/commands/*.md -> commands
+    let commands_dir = codex_dir.join("commands");
+    if commands_dir.exists() {
+        for entry in std::fs::read_dir(&commands_dir)? {
+            let entry = entry?;
+            let path = entry.path();
+            if path.is_file() && path.extension().map(|e| e == "md").unwrap_or(false) {
+                let name = path
+                    .file_stem()
+                    .and_then(|s| s.to_str())
+                    .unwrap_or("")
+                    .to_string();
+
+                if !name.is_empty() {
+                    skills.push(InstalledSkill {
+                        name,
+                        skill_type: SkillType::Command,
+                        tool: InstalledTool::Codex,
+                        path,
+                        bundle: None,
+                    });
+                }
+            }
+        }
+    }
+
+    // .codex/rules/*/RULE.md -> rules
+    let rules_dir = codex_dir.join("rules");
+    if rules_dir.exists() {
+        for entry in std::fs::read_dir(&rules_dir)? {
+            let entry = entry?;
+            let path = entry.path();
+            if path.is_dir() {
+                let rule_file = path.join("RULE.md");
+                if rule_file.exists() {
+                    let name = path
+                        .file_name()
+                        .and_then(|s| s.to_str())
+                        .unwrap_or("")
+                        .to_string();
+
+                    if !name.is_empty() {
+                        skills.push(InstalledSkill {
+                            name: name.clone(),
+                            skill_type: SkillType::Rule,
+                            tool: InstalledTool::Codex,
+                            path: rule_file,
+                            bundle: Some(name),
+                        });
+                    }
+                }
+            }
+        }
+    }
+
+    Ok(skills)
+}
+
 /// Group skills by tool, then by type
 pub fn group_by_tool(
     skills: &[InstalledSkill],
@@ -619,8 +731,8 @@ mod tests {
     fn test_discover_opencode_skills() {
         let dir = tempdir().unwrap();
 
-        // Create .opencode/skill/myskill/SKILL.md
-        let skill_dir = dir.path().join(".opencode/skill/myskill");
+        // Create .opencode/skills/myskill/SKILL.md
+        let skill_dir = dir.path().join(".opencode/skills/myskill");
         fs::create_dir_all(&skill_dir).unwrap();
         fs::write(skill_dir.join("SKILL.md"), "# My skill").unwrap();
 
@@ -680,6 +792,40 @@ mod tests {
     }
 
     #[test]
+    fn test_discover_claude_skills() {
+        let dir = tempdir().unwrap();
+
+        // Create .claude/skills/my-skill/SKILL.md (folder-based format)
+        let skill_dir = dir.path().join(".claude/skills/my-skill");
+        fs::create_dir_all(&skill_dir).unwrap();
+        fs::write(skill_dir.join("SKILL.md"), "# My Skill").unwrap();
+
+        let skills = discover_installed(dir.path()).unwrap();
+        assert_eq!(skills.len(), 1);
+        assert_eq!(skills[0].name, "my-skill");
+        assert_eq!(skills[0].skill_type, SkillType::Skill);
+        assert_eq!(skills[0].tool, InstalledTool::Claude);
+        assert_eq!(skills[0].bundle, Some("my-skill".to_string()));
+    }
+
+    #[test]
+    fn test_discover_claude_rules() {
+        let dir = tempdir().unwrap();
+
+        // Create .claude/rules/my-rule/RULE.md (folder-based format)
+        let rule_dir = dir.path().join(".claude/rules/my-rule");
+        fs::create_dir_all(&rule_dir).unwrap();
+        fs::write(rule_dir.join("RULE.md"), "# My Rule").unwrap();
+
+        let skills = discover_installed(dir.path()).unwrap();
+        assert_eq!(skills.len(), 1);
+        assert_eq!(skills[0].name, "my-rule");
+        assert_eq!(skills[0].skill_type, SkillType::Rule);
+        assert_eq!(skills[0].tool, InstalledTool::Claude);
+        assert_eq!(skills[0].bundle, Some("my-rule".to_string()));
+    }
+
+    #[test]
     fn test_filter_by_tool() {
         let skills = vec![
             InstalledSkill {
@@ -701,5 +847,69 @@ mod tests {
         let filtered = filter_by_tool(skills, "claude");
         assert_eq!(filtered.len(), 1);
         assert_eq!(filtered[0].name, "test1");
+    }
+
+    #[test]
+    fn test_discover_codex_skills() {
+        let dir = tempdir().unwrap();
+
+        // Create .codex/skills/my-skill/SKILL.md (folder-based format)
+        let skill_dir = dir.path().join(".codex/skills/my-skill");
+        fs::create_dir_all(&skill_dir).unwrap();
+        fs::write(skill_dir.join("SKILL.md"), "# My Skill").unwrap();
+
+        let skills = discover_installed(dir.path()).unwrap();
+        assert_eq!(skills.len(), 1);
+        assert_eq!(skills[0].name, "my-skill");
+        assert_eq!(skills[0].skill_type, SkillType::Skill);
+        assert_eq!(skills[0].tool, InstalledTool::Codex);
+    }
+
+    #[test]
+    fn test_discover_codex_agents() {
+        let dir = tempdir().unwrap();
+
+        // Create .codex/agents/my-agent.md
+        let agents_dir = dir.path().join(".codex/agents");
+        fs::create_dir_all(&agents_dir).unwrap();
+        fs::write(agents_dir.join("my-agent.md"), "# My Agent").unwrap();
+
+        let skills = discover_installed(dir.path()).unwrap();
+        assert_eq!(skills.len(), 1);
+        assert_eq!(skills[0].name, "my-agent");
+        assert_eq!(skills[0].skill_type, SkillType::Agent);
+        assert_eq!(skills[0].tool, InstalledTool::Codex);
+    }
+
+    #[test]
+    fn test_discover_codex_commands() {
+        let dir = tempdir().unwrap();
+
+        // Create .codex/commands/my-command.md
+        let commands_dir = dir.path().join(".codex/commands");
+        fs::create_dir_all(&commands_dir).unwrap();
+        fs::write(commands_dir.join("my-command.md"), "# My Command").unwrap();
+
+        let skills = discover_installed(dir.path()).unwrap();
+        assert_eq!(skills.len(), 1);
+        assert_eq!(skills[0].name, "my-command");
+        assert_eq!(skills[0].skill_type, SkillType::Command);
+        assert_eq!(skills[0].tool, InstalledTool::Codex);
+    }
+
+    #[test]
+    fn test_discover_codex_rules() {
+        let dir = tempdir().unwrap();
+
+        // Create .codex/rules/my-rule/RULE.md (folder-based format)
+        let rule_dir = dir.path().join(".codex/rules/my-rule");
+        fs::create_dir_all(&rule_dir).unwrap();
+        fs::write(rule_dir.join("RULE.md"), "# My Rule").unwrap();
+
+        let skills = discover_installed(dir.path()).unwrap();
+        assert_eq!(skills.len(), 1);
+        assert_eq!(skills[0].name, "my-rule");
+        assert_eq!(skills[0].skill_type, SkillType::Rule);
+        assert_eq!(skills[0].tool, InstalledTool::Codex);
     }
 }

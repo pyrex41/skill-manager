@@ -267,7 +267,7 @@ mod tests {
         // Verify skill structure
         assert!(target_dir
             .path()
-            .join(".opencode/skill/test-bundle-helper/SKILL.md")
+            .join(".opencode/skills/test-bundle-helper/SKILL.md")
             .exists());
 
         // Test command
@@ -279,7 +279,7 @@ mod tests {
 
         assert!(target_dir
             .path()
-            .join(".opencode/command/test-bundle-commit.md")
+            .join(".opencode/commands/test-bundle-commit.md")
             .exists());
     }
 

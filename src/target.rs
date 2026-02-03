@@ -11,6 +11,7 @@ pub enum Tool {
     Claude,
     OpenCode,
     Cursor,
+    Codex,
 }
 
 /// Detected agent file format based on tools field syntax
@@ -36,8 +37,9 @@ impl Tool {
             Tool::OpenCode => home.join(".config/opencode"),
             Tool::Cursor => {
                 eprintln!("Warning: Cursor doesn't support global config, using current directory");
-                std::env::current_dir().unwrap_or(home)
+                std::env::current_dir().unwrap_or(home.clone())
             }
+            Tool::Codex => home.join(".codex"),
         }
     }
 
@@ -47,6 +49,7 @@ impl Tool {
             Tool::Claude => "Claude",
             Tool::OpenCode => "OpenCode",
             Tool::Cursor => "Cursor",
+            Tool::Codex => "Codex",
         }
     }
 
@@ -61,18 +64,24 @@ impl Tool {
             Tool::Claude => self.write_claude(target_dir, bundle_name, skill),
             Tool::OpenCode => self.write_opencode(target_dir, bundle_name, skill),
             Tool::Cursor => self.write_cursor(target_dir, bundle_name, skill),
+            Tool::Codex => self.write_codex(target_dir, bundle_name, skill),
         }
     }
 
     /// Get the destination info string for display
     pub fn dest_info(&self, skill_type: SkillType, bundle_name: &str) -> String {
         match self {
-            Tool::Claude => format!(".claude/{}/{}/", skill_type.dir_name(), bundle_name),
+            Tool::Claude => match skill_type {
+                SkillType::Skill => format!(".claude/skills/{}-*/SKILL.md", bundle_name),
+                SkillType::Agent => format!(".claude/agents/{}/", bundle_name),
+                SkillType::Command => format!(".claude/commands/{}/", bundle_name),
+                SkillType::Rule => format!(".claude/rules/{}-*/RULE.md", bundle_name),
+            },
             Tool::OpenCode => match skill_type {
-                SkillType::Skill => format!(".opencode/skill/{}-*/", bundle_name),
-                SkillType::Agent => ".opencode/agent/".to_string(),
-                SkillType::Command => ".opencode/command/".to_string(),
-                SkillType::Rule => format!(".opencode/rule/{}-*/", bundle_name),
+                SkillType::Skill => format!(".opencode/skills/{}-*/", bundle_name),
+                SkillType::Agent => ".opencode/agents/".to_string(),
+                SkillType::Command => ".opencode/commands/".to_string(),
+                SkillType::Rule => format!(".opencode/rules/{}-*/", bundle_name),
             },
             Tool::Cursor => match skill_type {
                 SkillType::Skill => format!(".cursor/skills/{}-*/", bundle_name),
@@ -80,10 +89,20 @@ impl Tool {
                 SkillType::Command => format!(".cursor/commands/{}-*.md", bundle_name),
                 SkillType::Rule => format!(".cursor/rules/{}-*/", bundle_name),
             },
+            Tool::Codex => match skill_type {
+                SkillType::Skill => format!(".codex/skills/{}-*/SKILL.md", bundle_name),
+                SkillType::Agent => format!(".codex/agents/{}-*.md", bundle_name),
+                SkillType::Command => format!(".codex/commands/{}-*.md", bundle_name),
+                SkillType::Rule => format!(".codex/rules/{}-*/RULE.md", bundle_name),
+            },
         }
     }
 
-    // Claude: .claude/{type}/{bundle}/{name}.md
+    // Claude:
+    //   skills -> .claude/skills/{bundle}-{name}/SKILL.md (folder-based with frontmatter)
+    //   agents -> .claude/agents/{bundle}/{name}.md (flat file within bundle dir)
+    //   commands -> .claude/commands/{bundle}/{name}.md (flat file within bundle dir)
+    //   rules -> .claude/rules/{bundle}-{name}/RULE.md (folder-based)
     // Phase 1+4: detect agent format and reverse-transform if needed
     fn write_claude(
         &self,
@@ -91,34 +110,73 @@ impl Tool {
         bundle_name: &str,
         skill: &SkillFile,
     ) -> Result<PathBuf> {
-        let dest_dir = target_dir
-            .join(".claude")
-            .join(skill.skill_type.dir_name())
-            .join(bundle_name);
-
-        fs::create_dir_all(&dest_dir)?;
-
-        let dest_file = dest_dir.join(format!("{}.md", skill.name));
-
         match skill.skill_type {
+            SkillType::Skill => {
+                // Skills use folder-based format: .claude/skills/{bundle}-{name}/SKILL.md
+                let combined_name = format!("{}-{}", bundle_name, skill.name);
+                let dest_dir = target_dir.join(".claude/skills").join(&combined_name);
+                fs::create_dir_all(&dest_dir)?;
+
+                let dest_file = dest_dir.join("SKILL.md");
+                transform_skill_file(&skill.path, &dest_file, &combined_name)?;
+
+                copy_companion_files(skill, &dest_dir)?;
+
+                Ok(dest_file)
+            }
+            SkillType::Rule => {
+                // Rules use folder-based format: .claude/rules/{bundle}-{name}/RULE.md
+                let combined_name = format!("{}-{}", bundle_name, skill.name);
+                let dest_dir = target_dir.join(".claude/rules").join(&combined_name);
+                fs::create_dir_all(&dest_dir)?;
+
+                let dest_file = dest_dir.join("RULE.md");
+                // Use skill transform to ensure frontmatter exists
+                transform_skill_file(&skill.path, &dest_file, &combined_name)?;
+
+                copy_companion_files(skill, &dest_dir)?;
+
+                Ok(dest_file)
+            }
             SkillType::Agent => {
+                // Agents are flat files within bundle dir: .claude/agents/{bundle}/{name}.md
+                let dest_dir = target_dir
+                    .join(".claude/agents")
+                    .join(bundle_name);
+                fs::create_dir_all(&dest_dir)?;
+
+                let dest_file = dest_dir.join(format!("{}.md", skill.name));
+
                 match detect_agent_format(&skill.path)? {
                     AgentFormat::OpenCode => transform_agent_for_claude(&skill.path, &dest_file)?,
                     _ => { fs::copy(&skill.path, &dest_file)?; }
                 }
+
+                copy_companion_files(skill, &dest_dir)?;
+
+                Ok(dest_file)
             }
-            _ => { fs::copy(&skill.path, &dest_file)?; }
+            SkillType::Command => {
+                // Commands are flat files within bundle dir: .claude/commands/{bundle}/{name}.md
+                let dest_dir = target_dir
+                    .join(".claude/commands")
+                    .join(bundle_name);
+                fs::create_dir_all(&dest_dir)?;
+
+                let dest_file = dest_dir.join(format!("{}.md", skill.name));
+                fs::copy(&skill.path, &dest_file)?;
+
+                copy_companion_files(skill, &dest_dir)?;
+
+                Ok(dest_file)
+            }
         }
-
-        copy_companion_files(skill, &dest_dir)?;
-
-        Ok(dest_file)
     }
 
     // OpenCode:
-    //   skills -> .opencode/skill/{bundle}-{name}/SKILL.md (with frontmatter)
-    //   agents -> .opencode/agent/{bundle}-{name}.md
-    //   commands -> .opencode/command/{bundle}-{name}.md
+    //   skills -> .opencode/skills/{bundle}-{name}/SKILL.md (with frontmatter)
+    //   agents -> .opencode/agents/{bundle}-{name}.md
+    //   commands -> .opencode/commands/{bundle}-{name}.md
     // Phase 4: detect agent format before transforming
     fn write_opencode(
         &self,
@@ -130,7 +188,7 @@ impl Tool {
 
         match skill.skill_type {
             SkillType::Skill => {
-                let dest_dir = target_dir.join(".opencode/skill").join(&combined_name);
+                let dest_dir = target_dir.join(".opencode/skills").join(&combined_name);
                 fs::create_dir_all(&dest_dir)?;
 
                 let dest_file = dest_dir.join("SKILL.md");
@@ -141,7 +199,7 @@ impl Tool {
                 Ok(dest_file)
             }
             SkillType::Rule => {
-                let dest_dir = target_dir.join(".opencode/rule").join(&combined_name);
+                let dest_dir = target_dir.join(".opencode/rules").join(&combined_name);
                 fs::create_dir_all(&dest_dir)?;
 
                 let dest_file = dest_dir.join("RULE.md");
@@ -153,7 +211,7 @@ impl Tool {
             }
             SkillType::Agent => {
                 // Flat file target — companion files not applicable
-                let dest_dir = target_dir.join(".opencode/agent");
+                let dest_dir = target_dir.join(".opencode/agents");
                 fs::create_dir_all(&dest_dir)?;
 
                 let dest_file = dest_dir.join(format!("{}.md", combined_name));
@@ -167,7 +225,7 @@ impl Tool {
             }
             SkillType::Command => {
                 // Flat file target — companion files not applicable
-                let dest_dir = target_dir.join(".opencode/command");
+                let dest_dir = target_dir.join(".opencode/commands");
                 fs::create_dir_all(&dest_dir)?;
 
                 let dest_file = dest_dir.join(format!("{}.md", combined_name));
@@ -227,6 +285,68 @@ impl Tool {
             SkillType::Rule => {
                 // Rules use .cursor/rules/ with RULE.md (folder-based)
                 let dest_dir = target_dir.join(".cursor/rules").join(&combined_name);
+                fs::create_dir_all(&dest_dir)?;
+
+                let dest_file = dest_dir.join("RULE.md");
+                transform_cursor_rule(&skill.path, &dest_file, &combined_name)?;
+
+                copy_companion_files(skill, &dest_dir)?;
+
+                Ok(dest_file)
+            }
+        }
+    }
+
+    // Codex:
+    //   skills -> .codex/skills/{bundle}-{name}/SKILL.md (folder-based with frontmatter)
+    //   agents -> .codex/agents/{bundle}-{name}.md (flat file)
+    //   commands -> .codex/commands/{bundle}-{name}.md (flat file)
+    //   rules -> .codex/rules/{bundle}-{name}/RULE.md (folder-based)
+    fn write_codex(
+        &self,
+        target_dir: &PathBuf,
+        bundle_name: &str,
+        skill: &SkillFile,
+    ) -> Result<PathBuf> {
+        let combined_name = format!("{}-{}", bundle_name, skill.name);
+
+        match skill.skill_type {
+            SkillType::Skill => {
+                // Skills use .codex/skills/ directory with SKILL.md
+                let dest_dir = target_dir.join(".codex/skills").join(&combined_name);
+                fs::create_dir_all(&dest_dir)?;
+
+                let dest_file = dest_dir.join("SKILL.md");
+                transform_skill_file(&skill.path, &dest_file, &combined_name)?;
+
+                copy_companion_files(skill, &dest_dir)?;
+
+                Ok(dest_file)
+            }
+            SkillType::Agent => {
+                // Agents use .codex/agents/ as flat files
+                let dest_dir = target_dir.join(".codex/agents");
+                fs::create_dir_all(&dest_dir)?;
+
+                let dest_file = dest_dir.join(format!("{}.md", combined_name));
+                // Codex uses similar format to Cursor for agents
+                transform_cursor_agent(&skill.path, &dest_file, &combined_name)?;
+
+                Ok(dest_file)
+            }
+            SkillType::Command => {
+                // Commands use .codex/commands/ as flat files
+                let dest_dir = target_dir.join(".codex/commands");
+                fs::create_dir_all(&dest_dir)?;
+
+                let dest_file = dest_dir.join(format!("{}.md", combined_name));
+                fs::copy(&skill.path, &dest_file)?;
+
+                Ok(dest_file)
+            }
+            SkillType::Rule => {
+                // Rules use .codex/rules/ with RULE.md (folder-based)
+                let dest_dir = target_dir.join(".codex/rules").join(&combined_name);
                 fs::create_dir_all(&dest_dir)?;
 
                 let dest_file = dest_dir.join("RULE.md");
@@ -1185,7 +1305,7 @@ This is the agent content.
 
         let result = Tool::OpenCode.write_file(&target_dir, "test-bundle", &skill).unwrap();
 
-        let expected_path = target_dir.join(".opencode/skill/test-bundle-my-skill/SKILL.md");
+        let expected_path = target_dir.join(".opencode/skills/test-bundle-my-skill/SKILL.md");
         assert_eq!(result, expected_path);
         assert!(expected_path.exists());
 
@@ -1368,7 +1488,7 @@ Agent content here.
 
         let result = Tool::OpenCode.write_file(&target_dir, "test-bundle", &skill).unwrap();
 
-        let expected_path = target_dir.join(".opencode/agent/test-bundle-test-agent.md");
+        let expected_path = target_dir.join(".opencode/agents/test-bundle-test-agent.md");
         assert_eq!(result, expected_path);
         assert!(expected_path.exists());
 
@@ -1414,9 +1534,10 @@ Agent content here.
 
         Tool::Claude.write_file(&target_dir, "my-bundle", &skill).unwrap();
 
-        let dest_dir = target_dir.join(".claude/skills/my-bundle");
-        // Main file should exist
-        assert!(dest_dir.join("pptx.md").exists());
+        // Skills now go to .claude/skills/{bundle}-{name}/SKILL.md
+        let dest_dir = target_dir.join(".claude/skills/my-bundle-pptx");
+        // Main file should exist as SKILL.md
+        assert!(dest_dir.join("SKILL.md").exists());
         // Companion .md file
         assert!(dest_dir.join("ooxml.md").exists());
         assert_eq!(
@@ -1451,7 +1572,7 @@ Agent content here.
 
         Tool::OpenCode.write_file(&target_dir, "bundle", &skill).unwrap();
 
-        let dest_dir = target_dir.join(".opencode/skill/bundle-pptx");
+        let dest_dir = target_dir.join(".opencode/skills/bundle-pptx");
         assert!(dest_dir.join("SKILL.md").exists());
         assert!(dest_dir.join("template.pptx").exists());
     }
@@ -1506,8 +1627,9 @@ Agent content here.
 
         Tool::Claude.write_file(&target_dir, "bundle", &skill).unwrap();
 
-        let dest_dir = target_dir.join(".claude/skills/bundle");
-        assert!(dest_dir.join("pptx.md").exists());
+        // Skills now go to .claude/skills/{bundle}-{name}/SKILL.md
+        let dest_dir = target_dir.join(".claude/skills/bundle-pptx");
+        assert!(dest_dir.join("SKILL.md").exists());
         assert!(dest_dir.join("helper.py").exists());
         // meta.yaml should NOT be copied
         assert!(!dest_dir.join("meta.yaml").exists());
@@ -1531,5 +1653,167 @@ Agent content here.
         // Should succeed without errors even though source_dir is None
         let result = Tool::Claude.write_file(&target_dir, "bundle", &skill).unwrap();
         assert!(result.exists());
+
+        // Verify it's in the correct location with SKILL.md filename
+        let expected_path = target_dir.join(".claude/skills/bundle-simple/SKILL.md");
+        assert_eq!(result, expected_path);
+    }
+
+    // ---- Claude skill folder-based format ----
+
+    #[test]
+    fn test_write_claude_skill() {
+        let temp_dir = tempdir().unwrap();
+        let target_dir = temp_dir.path().to_path_buf();
+
+        let src_content = "# My Skill\n\nContent here";
+        let src_path = temp_dir.path().join("source.md");
+        fs::write(&src_path, src_content).unwrap();
+
+        let skill = SkillFile {
+            name: "my-skill".to_string(),
+            path: src_path,
+            skill_type: SkillType::Skill,
+            source_dir: None,
+        };
+
+        let result = Tool::Claude.write_file(&target_dir, "test-bundle", &skill).unwrap();
+
+        // Should be in folder-based format: .claude/skills/{bundle}-{name}/SKILL.md
+        let expected_path = target_dir.join(".claude/skills/test-bundle-my-skill/SKILL.md");
+        assert_eq!(result, expected_path);
+        assert!(expected_path.exists());
+
+        let content = fs::read_to_string(&expected_path).unwrap();
+        // Should have frontmatter with name and description
+        assert!(content.contains("name: test-bundle-my-skill"));
+        assert!(content.contains("description: \"My Skill\""));
+        assert!(content.contains("# My Skill"));
+    }
+
+    #[test]
+    fn test_write_claude_rule() {
+        let temp_dir = tempdir().unwrap();
+        let target_dir = temp_dir.path().to_path_buf();
+
+        let src_content = "# My Rule\n\nRule content here";
+        let src_path = temp_dir.path().join("source.md");
+        fs::write(&src_path, src_content).unwrap();
+
+        let skill = SkillFile {
+            name: "my-rule".to_string(),
+            path: src_path,
+            skill_type: SkillType::Rule,
+            source_dir: None,
+        };
+
+        let result = Tool::Claude.write_file(&target_dir, "test-bundle", &skill).unwrap();
+
+        // Should be in folder-based format: .claude/rules/{bundle}-{name}/RULE.md
+        let expected_path = target_dir.join(".claude/rules/test-bundle-my-rule/RULE.md");
+        assert_eq!(result, expected_path);
+        assert!(expected_path.exists());
+    }
+
+    // ---- Codex support tests ----
+
+    #[test]
+    fn test_write_codex_skill() {
+        let temp_dir = tempdir().unwrap();
+        let target_dir = temp_dir.path().to_path_buf();
+
+        let src_content = "# My Skill\n\nContent here";
+        let src_path = temp_dir.path().join("source.md");
+        fs::write(&src_path, src_content).unwrap();
+
+        let skill = SkillFile {
+            name: "my-skill".to_string(),
+            path: src_path,
+            skill_type: SkillType::Skill,
+            source_dir: None,
+        };
+
+        let result = Tool::Codex.write_file(&target_dir, "test-bundle", &skill).unwrap();
+
+        // Should be in folder-based format: .codex/skills/{bundle}-{name}/SKILL.md
+        let expected_path = target_dir.join(".codex/skills/test-bundle-my-skill/SKILL.md");
+        assert_eq!(result, expected_path);
+        assert!(expected_path.exists());
+
+        let content = fs::read_to_string(&expected_path).unwrap();
+        assert!(content.contains("name: test-bundle-my-skill"));
+        assert!(content.contains("description: \"My Skill\""));
+    }
+
+    #[test]
+    fn test_write_codex_agent() {
+        let temp_dir = tempdir().unwrap();
+        let target_dir = temp_dir.path().to_path_buf();
+
+        let src_content = "---\nname: my-agent\ntools: Read, Grep\n---\nAgent instructions.";
+        let src_path = temp_dir.path().join("source.md");
+        fs::write(&src_path, src_content).unwrap();
+
+        let skill = SkillFile {
+            name: "my-agent".to_string(),
+            path: src_path,
+            skill_type: SkillType::Agent,
+            source_dir: None,
+        };
+
+        let result = Tool::Codex.write_file(&target_dir, "tb", &skill).unwrap();
+
+        // Should be flat file: .codex/agents/{bundle}-{name}.md
+        let expected_path = target_dir.join(".codex/agents/tb-my-agent.md");
+        assert_eq!(result, expected_path);
+        assert!(expected_path.exists());
+    }
+
+    #[test]
+    fn test_write_codex_command() {
+        let temp_dir = tempdir().unwrap();
+        let target_dir = temp_dir.path().to_path_buf();
+
+        let src_content = "# My Command\n\nDo something useful.";
+        let src_path = temp_dir.path().join("source.md");
+        fs::write(&src_path, src_content).unwrap();
+
+        let skill = SkillFile {
+            name: "my-command".to_string(),
+            path: src_path,
+            skill_type: SkillType::Command,
+            source_dir: None,
+        };
+
+        let result = Tool::Codex.write_file(&target_dir, "tb", &skill).unwrap();
+
+        // Should be flat file: .codex/commands/{bundle}-{name}.md
+        let expected_path = target_dir.join(".codex/commands/tb-my-command.md");
+        assert_eq!(result, expected_path);
+        assert!(expected_path.exists());
+    }
+
+    #[test]
+    fn test_write_codex_rule() {
+        let temp_dir = tempdir().unwrap();
+        let target_dir = temp_dir.path().to_path_buf();
+
+        let src_content = "# My Rule\n\nRule content.";
+        let src_path = temp_dir.path().join("source.md");
+        fs::write(&src_path, src_content).unwrap();
+
+        let skill = SkillFile {
+            name: "my-rule".to_string(),
+            path: src_path,
+            skill_type: SkillType::Rule,
+            source_dir: None,
+        };
+
+        let result = Tool::Codex.write_file(&target_dir, "test-bundle", &skill).unwrap();
+
+        // Should be folder-based: .codex/rules/{bundle}-{name}/RULE.md
+        let expected_path = target_dir.join(".codex/rules/test-bundle-my-rule/RULE.md");
+        assert_eq!(result, expected_path);
+        assert!(expected_path.exists());
     }
 }

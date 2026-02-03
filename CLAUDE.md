@@ -39,16 +39,20 @@ This is a Rust CLI tool for managing AI coding assistant skills across Claude, O
 
 ### Tool-Specific Path Mappings
 
-| Type | Claude | OpenCode | Cursor |
-|------|--------|----------|--------|
-| Skills | `.claude/skills/{bundle}/{name}.md` | `.opencode/skill/{bundle}-{name}/SKILL.md` | `.cursor/skills/{bundle}-{name}/SKILL.md` |
-| Agents | `.claude/agents/{bundle}/{name}.md` | `.opencode/agent/{bundle}-{name}.md` | `.cursor/agents/{bundle}-{name}.md` |
-| Commands | `.claude/commands/{bundle}/{name}.md` | `.opencode/command/{bundle}-{name}.md` | `.cursor/commands/{bundle}-{name}.md` |
-| Rules | `.claude/rules/{bundle}/{name}.md` | `.opencode/rule/{bundle}-{name}/RULE.md` | `.cursor/rules/{bundle}-{name}/RULE.md` |
+| Type | Claude | OpenCode | Cursor | Codex |
+|------|--------|----------|--------|-------|
+| Skills | `.claude/skills/{bundle}-{name}/SKILL.md` | `.opencode/skills/{bundle}-{name}/SKILL.md` | `.cursor/skills/{bundle}-{name}/SKILL.md` | `.codex/skills/{bundle}-{name}/SKILL.md` |
+| Agents | `.claude/agents/{bundle}/{name}.md` | `.opencode/agents/{bundle}-{name}.md` | `.cursor/agents/{bundle}-{name}.md` | `.codex/agents/{bundle}-{name}.md` |
+| Commands | `.claude/commands/{bundle}/{name}.md` | `.opencode/commands/{bundle}-{name}.md` | `.cursor/commands/{bundle}-{name}.md` | `.codex/commands/{bundle}-{name}.md` |
+| Rules | `.claude/rules/{bundle}-{name}/RULE.md` | `.opencode/rules/{bundle}-{name}/RULE.md` | `.cursor/rules/{bundle}-{name}/RULE.md` | `.codex/rules/{bundle}-{name}/RULE.md` |
 
-Skills require directory-based format with `SKILL.md` as the entrypoint and YAML frontmatter containing `name` and `description` fields. `target.rs:transform_skill_file()` adds this automatically for OpenCode and Cursor.
+Skills and rules require directory-based format with `SKILL.md`/`RULE.md` as the entrypoint and YAML frontmatter containing `name` and `description` fields. `target.rs:transform_skill_file()` adds this automatically for all tools.
 
-**Cursor Support**: Cursor now has full support for skills (`.cursor/skills/`), subagents (`.cursor/agents/`), commands (`.cursor/commands/`), and rules (`.cursor/rules/`). Skills and rules use folder-based format with `SKILL.md`/`RULE.md`, while agents and commands are flat markdown files.
+**Claude Support**: Claude skills must use folder-based format with `SKILL.md` filename. The `name` field in frontmatter controls the slash command name. Agents and commands remain flat files within bundle directories.
+
+**OpenCode Support**: OpenCode uses plural directory names (`.opencode/skills/`, `.opencode/agents/`, etc.) and discovers skills from `.claude/skills/` for cross-tool compatibility.
+
+**Codex Support**: OpenAI's Codex CLI uses `.codex/` directory structure similar to Cursor. Global config in `~/.codex/`. Also supports project guidance via `AGENTS.md` at repo root (not yet implemented in skm).
 
 ### Key Dependencies
 

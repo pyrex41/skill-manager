@@ -43,6 +43,16 @@ impl Tool {
         }
     }
 
+    /// Get the tool directory name (e.g. ".claude", ".opencode")
+    pub fn tool_dir_name(&self) -> &'static str {
+        match self {
+            Tool::Claude => ".claude",
+            Tool::OpenCode => ".opencode",
+            Tool::Cursor => ".cursor",
+            Tool::Codex => ".codex",
+        }
+    }
+
     /// Get the name of this tool for display
     pub fn name(&self) -> &'static str {
         match self {

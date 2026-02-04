@@ -2,6 +2,7 @@ mod bundle;
 mod config;
 mod discover;
 mod install;
+mod install_manifest;
 mod manifest;
 mod setup;
 mod source;
@@ -782,31 +783,39 @@ fn refresh_installed_skills(
     use crate::discover::{discover_installed, filter_by_tool};
     use std::collections::HashSet;
 
-    // Discover installed skills for this tool
-    let tool_name = match tool {
-        Tool::Claude => "claude",
-        Tool::OpenCode => "opencode",
-        Tool::Cursor => "cursor",
-        Tool::Codex => "codex",
-    };
-    let skills = filter_by_tool(discover_installed(target_dir)?, tool_name);
+    // Try manifest first as primary source of bundle names
+    let mut manifest = install_manifest::InstallManifest::load(tool, target_dir);
+    let use_manifest = !manifest.is_empty();
 
-    if skills.is_empty() {
-        println!();
-        println!("{}", "No installed skills to refresh.".yellow());
-        return Ok(());
-    }
+    // Build the set of bundle names to refresh
+    let bundles_to_refresh: HashSet<String> = if use_manifest {
+        manifest.bundle_names().into_iter().map(|s| s.to_string()).collect()
+    } else {
+        // Legacy fallback: discover from filesystem
+        let tool_name = match tool {
+            Tool::Claude => "claude",
+            Tool::OpenCode => "opencode",
+            Tool::Cursor => "cursor",
+            Tool::Codex => "codex",
+        };
+        let skills = filter_by_tool(discover_installed(target_dir)?, tool_name);
 
-    // Collect unique bundle names
-    let mut bundles_to_refresh: HashSet<String> = HashSet::new();
-    for skill in &skills {
-        if let Some(ref bundle) = skill.bundle {
-            bundles_to_refresh.insert(bundle.clone());
-        } else {
-            // For skills without bundle, use the skill name as bundle name
-            bundles_to_refresh.insert(skill.name.clone());
+        if skills.is_empty() {
+            println!();
+            println!("{}", "No installed skills to refresh.".yellow());
+            return Ok(());
         }
-    }
+
+        let mut names: HashSet<String> = HashSet::new();
+        for skill in &skills {
+            if let Some(ref bundle) = skill.bundle {
+                names.insert(bundle.clone());
+            } else {
+                names.insert(skill.name.clone());
+            }
+        }
+        names
+    };
 
     if bundles_to_refresh.is_empty() {
         println!();
@@ -821,13 +830,51 @@ fn refresh_installed_skills(
     let mut refreshed = 0;
     let mut not_found = 0;
     let mut errors = 0;
+    // Track which actual bundle names have been refreshed to avoid duplicates
+    // (e.g., "cl" from commands and "cl-setup" from skills should both resolve to "cl")
+    let mut already_refreshed: HashSet<String> = HashSet::new();
 
-    for bundle_name in bundles_to_refresh {
+    for bundle_name in &bundles_to_refresh {
         print!("  {} {}... ", "Refreshing".cyan(), bundle_name);
 
-        // Try to find this bundle in sources
-        match config.find_bundle(&bundle_name) {
-            Ok(Some((_source, bundle))) => {
+        // Try to find this bundle in sources (exact match first, then prefix match)
+        let found = match config.find_bundle(bundle_name) {
+            Ok(Some((source, bundle))) => Some((source.display_path(), bundle)),
+            Ok(None) => {
+                // Legacy fallback: skills/rules use {bundle}-{name} folder format,
+                // so the discovered "bundle name" may actually be a combined name.
+                match config.find_bundle_by_prefix(bundle_name) {
+                    Ok(Some(bundle)) => {
+                        // We don't have the source display path from prefix match,
+                        // but we can look it up
+                        let source_display = config
+                            .find_bundle(&bundle.name)
+                            .ok()
+                            .flatten()
+                            .map(|(s, _)| s.display_path())
+                            .unwrap_or_default();
+                        Some((source_display, bundle))
+                    }
+                    Ok(None) => None,
+                    Err(_) => None,
+                }
+            }
+            Err(e) => {
+                println!("{}: {}", "error".red(), e);
+                errors += 1;
+                continue;
+            }
+        };
+
+        match found {
+            Some((source_display, bundle)) => {
+                // Skip if we already refreshed this actual bundle
+                if already_refreshed.contains(&bundle.name) {
+                    println!("{} (via {})", "already refreshed".dimmed(), bundle.name);
+                    continue;
+                }
+                already_refreshed.insert(bundle.name.clone());
+
                 // Re-install this bundle
                 let mut count = 0;
                 for skill_type in types {
@@ -845,19 +892,22 @@ fn refresh_installed_skills(
                 if count > 0 {
                     println!("{} ({} files)", "done".green(), count);
                     refreshed += 1;
+                    // Record in manifest (migrates legacy installs)
+                    manifest.record_install(&bundle.name, &source_display);
                 } else {
                     println!("{}", "no files".dimmed());
                 }
             }
-            Ok(None) => {
+            None => {
                 println!("{}", "not found in sources".yellow());
                 not_found += 1;
             }
-            Err(e) => {
-                println!("{}: {}", "error".red(), e);
-                errors += 1;
-            }
         }
+    }
+
+    // Save manifest (persists migration or updates)
+    if let Err(e) = manifest.save(tool, target_dir) {
+        eprintln!("Warning: could not save install manifest: {}", e);
     }
 
     println!();
@@ -1234,6 +1284,12 @@ fn clean_all_skills(base: &PathBuf, filter_tool: Option<&str>, skip_confirm: boo
     println!();
     if removed > 0 {
         println!("{} Removed {} skill(s)", "".green(), removed);
+
+        // Delete manifest files
+        for tool_enum in [Tool::Claude, Tool::OpenCode, Tool::Cursor, Tool::Codex] {
+            let path = install_manifest::InstallManifest::path_for(&tool_enum, base);
+            let _ = std::fs::remove_file(&path);
+        }
     }
     if errors > 0 {
         println!("{} Failed to remove {} skill(s)", "".red(), errors);
@@ -1360,6 +1416,16 @@ fn remove_bundle(
 
     if removed > 0 {
         println!("{} Removed {} file(s)", "".green(), removed);
+
+        // Remove from manifest for all tools
+        for tool_enum in [Tool::Claude, Tool::OpenCode, Tool::Cursor, Tool::Codex] {
+            let mut manifest = install_manifest::InstallManifest::load(&tool_enum, base);
+            if manifest.remove_bundle(bundle_name) {
+                if let Err(e) = manifest.save(&tool_enum, base) {
+                    eprintln!("Warning: could not save install manifest: {}", e);
+                }
+            }
+        }
     }
     if errors > 0 {
         println!("{} Failed to remove {} file(s)", "".red(), errors);
@@ -1495,12 +1561,12 @@ fn do_install(
 ) -> Result<()> {
     let (source_name, bundle_name) = parse_bundle_ref(bundle_ref);
 
-    match (source_name, bundle_name) {
+    let records = match (source_name, bundle_name) {
         (Some(source_name), Some(bundle_name)) => {
             // Explicit source/bundle: "fg/synapse-docs"
             match config.find_source_by_name(source_name) {
                 Some((source, _)) => {
-                    install_bundle_from_source(source.as_ref(), bundle_name, tool, target_dir, types)
+                    install_bundle_from_source(source.as_ref(), bundle_name, tool, target_dir, types)?
                 }
                 None => {
                     anyhow::bail!("Source '{}' not found. Add it with: skm sources add {} <path>", source_name, source_name);
@@ -1512,11 +1578,11 @@ fn do_install(
             // First check if it's a named source
             if let Some((source, _)) = config.find_source_by_name(name) {
                 // Install all bundles from this source
-                return install_from_source(source.as_ref(), tool, target_dir, types);
+                install_from_source(source.as_ref(), tool, target_dir, types)?
+            } else {
+                // Otherwise, search all sources for a bundle with this name
+                install_bundle(config, name, tool, target_dir, types)?
             }
-
-            // Otherwise, search all sources for a bundle with this name
-            install_bundle(config, name, tool, target_dir, types)
         }
         (None, None) => {
             anyhow::bail!("No bundle specified");
@@ -1524,7 +1590,20 @@ fn do_install(
         (Some(_), None) => {
             anyhow::bail!("Invalid bundle reference");
         }
+    };
+
+    // Record installed bundles in manifest
+    if !records.is_empty() {
+        let mut manifest = install_manifest::InstallManifest::load(tool, target_dir);
+        for rec in &records {
+            manifest.record_install(&rec.bundle_name, &rec.source_display);
+        }
+        if let Err(e) = manifest.save(tool, target_dir) {
+            eprintln!("Warning: could not save install manifest: {}", e);
+        }
     }
+
+    Ok(())
 }
 
 #[cfg(test)]

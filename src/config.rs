@@ -196,6 +196,35 @@ impl Config {
         Ok(None)
     }
 
+    /// Find a bundle by prefix match across all sources.
+    /// Legacy fallback: used when no install manifest exists (pre-manifest installs).
+    /// Installed skills use `{bundle}-{name}` folder names, so when exact matching
+    /// fails, this tries to find a bundle whose name is a prefix of the installed name.
+    /// New installs record bundle info in `.skm.toml` manifests instead.
+    pub fn find_bundle_by_prefix(
+        &self,
+        installed_name: &str,
+    ) -> Result<Option<crate::bundle::Bundle>> {
+        let mut best_match: Option<crate::bundle::Bundle> = None;
+        let mut best_len = 0;
+
+        for source in self.sources() {
+            let bundles = match source.list_bundles() {
+                Ok(b) => b,
+                Err(_) => continue,
+            };
+            for bundle in bundles {
+                let prefix = format!("{}-", bundle.name);
+                if installed_name.starts_with(&prefix) && bundle.name.len() > best_len {
+                    best_len = bundle.name.len();
+                    best_match = Some(bundle);
+                }
+            }
+        }
+
+        Ok(best_match)
+    }
+
     /// Find a source by its name
     pub fn find_source_by_name(&self, name: &str) -> Option<(Box<dyn Source>, &SourceConfig)> {
         for source_config in &self.sources {

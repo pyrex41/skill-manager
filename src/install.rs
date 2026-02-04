@@ -7,6 +7,12 @@ use crate::config::Config;
 use crate::source::Source;
 use crate::target::Tool;
 
+/// Record of a bundle that was installed, for manifest tracking.
+pub struct InstallRecord {
+    pub bundle_name: String,
+    pub source_display: String,
+}
+
 /// Install a bundle to the target directory
 pub fn install_bundle(
     config: &Config,
@@ -14,9 +20,9 @@ pub fn install_bundle(
     tool: &Tool,
     target_dir: &PathBuf,
     types: &[SkillType],
-) -> Result<()> {
+) -> Result<Vec<InstallRecord>> {
     // Find the bundle in configured sources
-    let (_source, bundle) = config.find_bundle(bundle_name)?.ok_or_else(|| {
+    let (source, bundle) = config.find_bundle(bundle_name)?.ok_or_else(|| {
         // Collect available bundle names for the error message
         let mut available = vec![];
         for src in config.sources() {
@@ -37,6 +43,8 @@ pub fn install_bundle(
         )
     })?;
 
+    let source_display = source.display_path();
+
     println!(
         "Importing from {} to {}...",
         bundle_name.cyan(),
@@ -77,7 +85,10 @@ pub fn install_bundle(
         println!("{}", "Done!".green());
     }
 
-    Ok(())
+    Ok(vec![InstallRecord {
+        bundle_name: bundle.name,
+        source_display,
+    }])
 }
 
 /// Install all bundles from a named source
@@ -86,23 +97,26 @@ pub fn install_from_source(
     tool: &Tool,
     target_dir: &PathBuf,
     types: &[SkillType],
-) -> Result<()> {
+) -> Result<Vec<InstallRecord>> {
     let bundles = source.list_bundles()?;
 
     if bundles.is_empty() {
         println!("{}", "No bundles found in source.".yellow());
-        return Ok(());
+        return Ok(vec![]);
     }
+
+    let source_display = source.display_path();
 
     println!(
         "Installing {} bundle(s) from {} to {}...",
         bundles.len(),
-        source.display_path().cyan(),
+        source_display.cyan(),
         tool.name()
     );
     println!();
 
     let mut total_files = 0;
+    let mut records = Vec::new();
 
     for bundle in bundles {
         let mut bundle_files = 0;
@@ -119,6 +133,10 @@ pub fn install_from_source(
         if bundle_files > 0 {
             println!("  {} {} file(s)", bundle.name.cyan(), bundle_files);
             total_files += bundle_files;
+            records.push(InstallRecord {
+                bundle_name: bundle.name,
+                source_display: source_display.clone(),
+            });
         }
     }
 
@@ -129,7 +147,7 @@ pub fn install_from_source(
         println!("{} {} file(s) installed.", "Done!".green(), total_files);
     }
 
-    Ok(())
+    Ok(records)
 }
 
 /// Install a specific bundle from a specific source
@@ -139,14 +157,16 @@ pub fn install_bundle_from_source(
     tool: &Tool,
     target_dir: &PathBuf,
     types: &[SkillType],
-) -> Result<()> {
+) -> Result<Vec<InstallRecord>> {
     let bundles = source.list_bundles()?;
+
+    let source_display = source.display_path();
 
     let bundle = bundles.into_iter().find(|b| b.name == bundle_name).ok_or_else(|| {
         anyhow::anyhow!(
             "Bundle '{}' not found in source '{}'",
             bundle_name,
-            source.display_path()
+            source_display
         )
     })?;
 
@@ -190,7 +210,10 @@ pub fn install_bundle_from_source(
         println!("{}", "Done!".green());
     }
 
-    Ok(())
+    Ok(vec![InstallRecord {
+        bundle_name: bundle.name,
+        source_display,
+    }])
 }
 
 #[cfg(test)]
